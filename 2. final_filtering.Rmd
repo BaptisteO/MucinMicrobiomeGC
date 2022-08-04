@@ -53,18 +53,3 @@ writexl::write_xlsx(x= track_fin,col_names = TRUE,path = "ReadTracking_IlluminaP
 ```{r}
 rm(list = setdiff(ls(),c("agglom_BA","agglom_BA2","agglom_BA3","agglom_relAb","agglom_relAb2","agglom_relAb3")))
 ```
-
-<!-- Based on the positive control sequenced with the Ghent and Antwerp cohorts, a relative abundance threshold was set to filter out aberrant reads. -->
-
-<!-- ```{r} -->
-<!-- abundance_cutOff <- prune_samples(c("pos"), agglom_relAb) %>% -->
-<!--     otu_table() %>% -->
-<!--     as.data.frame() %>% -->
-<!--     .[.>0] %>% -->
-<!--     min() -->
-
-<!-- otu_table(agglom_BA)[otu_table(agglom_relAb)<abundance_cutOff] <- 0 -->
-<!-- otu_table(agglom_relAb)[otu_table(agglom_relAb)<abundance_cutOff] <- 0 -->
-<!-- agglom_relAb <- filter_taxa(agglom_relAb, function(x) { sum(x) > 0 }, prune = TRUE) -->
-<!-- agglom_BA <- filter_taxa(agglom_BA, function(x) { sum(x) > 0 }, prune = TRUE) -->
-<!-- ``` -->
