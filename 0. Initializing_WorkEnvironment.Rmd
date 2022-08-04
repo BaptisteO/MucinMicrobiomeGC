@@ -27,10 +27,10 @@ rm(packages)
 Setting the working directories for the analysis
 
 ```{r setup, include=FALSE}
-wd_dir <- "/mnt/WorkDrive/Baptiste/GastricMicrobiome"
-refDB_path <- "/mnt/WorkDrive/Baptiste/ReferenceDatabases/Silva/V138/DECIPHER_formated/SILVA_SSU_r138_2019.RData"
-fastq_dir <- "/mnt/WorkDrive/Baptiste/GastricMicrobiome/Pooled_BE_LI"
+wd_dir <- #set working dicrectory path
+refDB_path <- #set path to Silva V138 taxonomy reference database
+fastq_dir <- #set path to fastq files
 
 #Clinical data file
-meta_file <- "/mnt/WorkDrive/Baptiste/GastricMicrobiome/ClinicalData/GC_overview_final07022022.xlsx"
+meta_file <- #set path to excel file containing metadata
 ```
