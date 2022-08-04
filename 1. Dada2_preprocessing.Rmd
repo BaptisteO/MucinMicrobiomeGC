@@ -1,0 +1,203 @@
+---
+title: "1. dada2_preprocessing"
+author: "Baptiste Oosterlinck"
+date: "29-9-2021"
+output: html_document
+---
+
+# Quality control of the sequences
+
+##1.   Drawing the average quality profile of the forward and reverse reads. Allows the choice for:
+
+    1.  truncation length
+
+    2.  left trim length
+
+    3.  right trim length
+
+    4.  maximum expected error
+
+```{r}
+##getting the file paths of the fastq-files of the samples
+fnFs <- sort(list.files(fastq_dir, pattern = "_R1_001.fastq", full.names = TRUE))
+fnRs <- sort(list.files(fastq_dir, pattern = "_R2_001.fastq", full.names = TRUE))
+##getting the sample names
+sample.names <- sapply(strsplit(basename(fnFs), "_"), `[`, 1)
+##return aggregated quality plot of the reads
+raw_forward_qualityPlot <- plotQualityProfile(fnFs, aggregate = TRUE) +
+    ggtitle("Forward Reads") +
+    geom_hline(aes(yintercept=30))
+raw_reverse_qualityPlot <- plotQualityProfile(fnRs, aggregate = TRUE) +
+    ggtitle("Reverse Reads") +
+    geom_hline(aes(yintercept = 30))
+gridExtra::grid.arrange(nrow = 1, raw_forward_qualityPlot, raw_reverse_qualityPlot)
+```
+
+##2.   Setting the different parameters for the filter and trim function of dada2 and performing the filtering and trimming
+
+```{r}
+##make folder for new filtered sequences
+filtFs <- file.path(fastq_dir, "filtered", paste0(sample.names, "_F_filt.fastq.gz"))
+filtRs <- file.path(fastq_dir, "filtered", paste0(sample.names, "_R_filt.fastq.gz"))
+names(filtFs) <- sample.names
+names(filtRs) <- sample.names
+
+##filter and trim the sequences:
+truncLenF <- as.numeric(readline(prompt = "Forward truncation length: "))   #G_0 L_275 A_235 P_255
+truncLenR <- as.numeric(readline(prompt = "Reverse truncation length: "))   #G_0 L_208 A_155 P_175
+truncLen_par <- c(truncLenF, truncLenR)
+rm(truncLenF, truncLenR)
+
+trimLeftF <- as.numeric(readline(prompt = "Forward left trim length: "))    #G_13 L_0 A_0
+trimLeftR <- as.numeric(readline(prompt = "Reverse left trim length: "))    #G_5  L_0 A_0
+trimLeft_par <- c(trimLeftF, trimLeftR)
+rm(trimLeftF,trimLeftR)
+
+trimRightF <- as.numeric(readline(prompt = "Forward right trim length: "))  #G_10 L_0 A_0
+trimRightR <- as.numeric(readline(prompt = "Reverse right trim length: "))  #G_10 L_0 A_0
+trimRight_par <- c(trimRightF, trimRightR)
+rm(trimRightF,trimRightR)
+ 
+maxEEF <- as.numeric(readline(prompt = "Max forward expected error: "))     #G_2 L_2 A_2
+maxEER <- as.numeric(readline(prompt = "Max reverse expected error: "))     #G_2 L_4 A_2
+maxEE_par <- c(maxEEF, maxEER)
+rm(maxEEF,maxEER)
+
+filtered_seq <- filterAndTrim(fnFs, filtFs, fnRs, filtRs, truncLen = truncLen_par, trimLeft = trimLeft_par, trimRight = trimRight_par, maxN = 0, maxEE = maxEE_par, truncQ = 2, rm.phix = TRUE, compress = TRUE, multithread = TRUE)
+rm(truncLen_par, trimLeft_par, trimRight_par, maxEE_par)
+```
+
+##2.   learning the sequencing errors (learnErrors) and denoise the sequences (dada)
+
+```{r}
+##error modeling of the sequences and correction using the dada function
+##learning errors
+errF <- learnErrors(filtFs, multithread = TRUE)
+errR <- learnErrors(filtRs, multithread = TRUE)
+##remove the sequencing errors => denoising the data
+dadaFs = dada(filtFs, err = errF, multithread = TRUE,pool = "pseudo")
+dadaRs = dada(filtRs, err = errR, multithread = TRUE, pool = "pseudo")
+##merge the forward and reverse sequences
+merged_sequences <- mergePairs(dadaFs, filtFs, dadaRs,filtRs,verbose = TRUE)
+```
+
+##3.   generating the count table, removing the chimeric reads and infering taxonomy
+
+```{r}
+##generating a count table
+seqTable <- makeSequenceTable(merged_sequences)
+##identifying and removing the chimeric reads
+Ill_chFilter <- removeBimeraDenovo(seqTable, method = "consensus", multithread = TRUE, verbose = TRUE)
+##assigning taxonomy using DECIPHER
+#uses trained classifiers which deliver a beter performance
+dna <- DNAStringSet(getSequences(Ill_chFilter))
+load(refDB_path)
+AssignedTaxonomy <- IdTaxa(dna, trainingSet, strand = "both",processors = NULL)
+ranks <- c("domain", "phylum", "class", "order", "family", "genus")
+#transform to a matrix useable with dada2
+Ill_tax <- t(sapply(AssignedTaxonomy, function(x) {
+  m <- match(ranks, x$rank)
+  taxa <- x$taxon[m]
+  taxa[startsWith(taxa, "unclassified_")] <- NA
+  taxa
+}))
+colnames(Ill_tax) <- ranks
+rownames(Ill_tax) <- getSequences(Ill_chFilter)
+```
+
+##4.   calculating the phylogenetic tree
+
+```{r}
+##calculate the phylogenetic tree
+##aligning the sequences
+seq_chfilter <- getSequences(Ill_chFilter)
+names(seq_chfilter) <- seq_chfilter
+alignment <- AlignSeqs(DNAStringSet(seq_chfilter), anchor = NA)
+##constructing the neighbor-joining tree
+phang.align <- phyDat(as(alignment, "matrix"), type = "DNA")
+phang.distance <- dist.ml(phang.align)
+treeNJ <- NJ(phang.distance)
+
+##set the negative edges length to 0
+treeNJ <- pml(treeNJ, data = phang.align)
+fitGTR <- update(treeNJ, k=4, inv=0.2)
+```
+
+##5.   handing over all data to a phyloseq object:
+
+    -   count table
+
+    -   taxonomy table
+
+    -   reference sequences
+
+    -   meta data
+
+```{r} 
+#reading the clinical data
+#manually importing the different metadata 
+MetaData_GC <- full_join(ClinicalData_GC,MucinExpression_GC,by = "Sample.ID",) %>%
+  drop_na(data = ., "Illumina.ID") %>%
+  as.data.frame(.)
+rownames(MetaData_GC) <- MetaData_GC$Illumina.ID
+
+Ill_tax <- gsub("Escherichia-Shigella", "Escherichia", Ill_tax)
+
+Ill_dada_chFilter <-  phyloseq(otu_table(Ill_chFilter, taxa_are_rows = FALSE), tax_table(Ill_tax),sample_data(MetaData_GC),phy_tree(fitGTR$tree))
+
+##add reference sequences to the phyloseq object
+addRefSeq <- function(dadaPhylo){
+  sequences <- DNAStringSet(taxa_names(dadaPhylo))
+  names(sequences) <- taxa_names(dadaPhylo)
+  Ill_dada <- merge_phyloseq(dadaPhylo, sequences)
+  return(Ill_dada)
+} 
+
+Ill_dada_chFilter <- addRefSeq(Ill_dada_chFilter)
+Ill_dada_ASV <- Ill_dada_chFilter
+##rename the taxa to ASVxx
+taxa_names(Ill_dada_ASV) <- paste0("ASV",seq(ntaxa(Ill_dada_chFilter)))
+```
+
+#Tracking the reads through the different filtering steps
+
+```{r}
+getN <- function(x) sum(getUniques(x))
+track <- cbind(filtered_seq, sapply(dadaFs,getN),sapply(dadaRs,getN),sapply(merged_sequences,getN),rowSums(Ill_chFilter))
+colnames(track) <- c("input","filtered","denoisedF","denoisedR","merged","no-chimera")
+rownames(track) <- sample.names
+track <- as.data.frame(track)
+
+Ill_dada_Bact <- subset_taxa(Ill_dada_ASV, domain == "Bacteria")
+
+track2 <- as.data.frame(rowSums(otu_table(Ill_dada_Bact)))
+colnames(track2) <- c("bacterial")
+track_fin <- merge(track,track2,by = "row.names")
+row.names(track_fin) <- track_fin$Row.names
+track_fin <- track_fin[,2:8]
+
+write.csv(track_fin,"/mnt/WorkDrive/Baptiste/GastricMicrobiome/Analyses/ReadTracking_IlluminaBelgium_15022022.csv",row.names=FALSE)
+```
+
+#clean up the phyloseq object
+```{r}
+#rename the taxonomic levels
+colnames(tax_table(Ill_dada_Bact)) <- c("Kingdom", "Phylum", "Class", "Order", "Family", "Genus")
+```
+
+##1.   transform the counts to relative abundance data
+```{r}
+#remove the taxa without any counts after all the clean-up
+Ill_dada_Bact <- filter_taxa(Ill_dada_Bact, function(x) { sum(x) >= 1 }, prune = TRUE)
+
+#agglomerate the taxa at genus level
+agglom_BA <- tax_glom(Ill_dada_Bact, "Genus")
+agglom_relAb <- transform_sample_counts(agglom_BA, function(x) x/sum(x))
+```
+
+#Clean-up the environment
+```{r}
+#datasets to keep
+keep_data <- c("agglom_BA","agglom_relAb","track_fin")
+rm(list = setdiff(ls(),keep_data))
+```

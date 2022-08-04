@@ -1,0 +1,368 @@
+---
+title: "8. metagenome_inferance_analysis"
+author: "Baptiste Oosterlinck"
+date: "28-3-2022"
+output: html_document
+---
+
+##Reading in the Picrust files
+```{r}
+picrust2 = "Picrust/Picrust_absoluteAbundance/picrust2_out_pipeline_stratified"
+#list.files(picrust2, recursive = TRUE)
+
+#build picrust output paths
+p2_EC = paste0(picrust2, "/EC_metagenome_out/pred_metagenome_unstrat.tsv")
+p2_KO = paste0(picrust2, "/KO_metagenome_out/pred_metagenome_unstrat.tsv")
+p2_PW = paste0(picrust2, "/pathways_out/path_abun_unstrat.tsv")
+
+#location to the mapfiles to link Picrust output to MetaCyc pathways
+mapfile = "Picrust/pathway_mapfiles"
+#list.files(mapfile, recursive = TRUE)
+
+#build map file pathways
+mapfile_EC = paste0(mapfile, "/ec_level4_info.tsv.gz")
+mapfile_KO = paste0(mapfile, "/ko_info.tsv.gz")
+mapfile_PW = paste0(mapfile, "/metacyc_pathways_info.txt.gz")
+
+#loading the mapfiles
+mapEC = as.data.frame(fread(mapfile_EC, header = FALSE))
+colnames(mapEC) = c("function","description")
+mapKO = as.data.frame(fread(mapfile_KO, header = FALSE, sep = "\t"))
+colnames(mapKO) = c("function","description")
+mapPW = as.data.frame(fread(mapfile_PW, header = FALSE))
+colnames(mapPW) = c("pathway","description")
+
+#loading the Picrust output files
+p2EC = as.data.frame(fread(p2_EC))
+rownames(p2EC) = p2EC$"function"
+p2EC = as.matrix(p2EC[,-1])
+p2EC = round(p2EC)
+
+p2KO = as.data.frame(fread(p2_KO))
+rownames(p2KO) = p2KO$"function"
+p2KO = as.matrix(p2KO[,-1])
+p2KO = round(p2KO)
+
+p2PW = as.data.frame(fread(p2_PW))
+rownames(p2PW) = p2PW$"pathway"
+p2PW = as.matrix(p2PW[,-1])
+p2PW = round(p2PW)
+```
+
+## Performing the differential abundance analysis using ALDEx2
+
+```{r}
+#reorder the metadata dataframe to match the pathway collumn order
+MetaData2 <- MetaData[match(colnames(p2PW),MetaData$Illumina.ID),]
+
+#selecting the adjacent and tumor tissues from the dataframe (for paired testing)
+MetaData2_Tissue <- MetaData2[MetaData2$Tissue.Type %in% c("tumor","adjacent"),] 
+#selecting from the picrust pathway dataframe
+p2PW_Tissue <- p2PW[,MetaData2_Tissue$Illumina.ID]
+
+#performing the differential abundance between adjacent and tumor (unpaired)
+PicrustAld_TissueUnPaired <- aldex(reads = p2PW_Tissue, conditions = as.factor(droplevels(MetaData2_Tissue$Tissue.Type)) ,test = "t",effect = TRUE ,include.sample.summary = FALSE,verbose = TRUE,denom = "all",paired = FALSE)
+PicrustAld_TissueUnPaired <- PicrustAld_TissueUnPaired[PicrustAld_TissueUnPaired$wi.ep < 0.1, ] %>%
+  mutate(.,pathway = rownames(.)) %>%
+  left_join(.,mapPW,by = "pathway")
+print(PicrustAld_TissueUnPaired)
+
+#selecting the paired samples from MetaData_2
+MetaData2_Tissue <- MetaData2_Tissue[!MetaData2_Tissue$Patient.ID %in% nonPaired.PID,]
+p2PW_Tissue <- p2PW[,MetaData2_Tissue$Illumina.ID]
+
+#performing the differential abundance testing pair wise
+PicrustAld_TissuePaired <- aldex(reads = p2PW_Tissue, conditions = as.factor(droplevels(MetaData2_Tissue$Tissue.Type)) ,test = "t",effect = FALSE ,include.sample.summary = FALSE,verbose = TRUE,denom = "all",paired = TRUE)
+PicrustAld_TissuePaired_Filtered <- PicrustAld_TissuePaired[PicrustAld_TissuePaired$wi.ep < 0.05, ] %>%
+  mutate(.,pathway = rownames(.)) %>%
+  left_join(.,mapPW,by = "pathway")
+print(PicrustAld_TissuePaired_Filtered)
+
+#testing differential abundance accross control - adjacent - tumor
+PicrustAld_TissueOverall <- aldex(reads = p2PW, conditions = MetaData2$Tissue.Type, test = "kw",effect = FALSE, denom = "all")
+PicrustAld_TissueOverall_Filtered <- PicrustAld_TissueOverall[PicrustAld_TissueOverall$kw.ep < 0.05, ] %>%
+  mutate(.,pathway = rownames(.)) %>%
+  left_join(.,mapPW,by = "pathway")
+print(PicrustAld_TissueOverall_Filtered)
+```
+##testing differential abundance accross mucin phenotypes in tumor tissue
+```{r}
+#selecting tumor tissues from the metadata and selecting them from the pathway dataframe
+MetaData2_tumor <- MetaData2[MetaData2$Tissue.Type == "tumor",] %>%
+  drop_na(., Mucin.Phenotype)
+p2_PW_tumor <- p2PW[,MetaData2_tumor$Illumina.ID]
+  
+PicrustAld_tumor <- aldex(reads = p2_PW_tumor, conditions = MetaData2_tumor$Mucin.Phenotype, test = "kw",effect = FALSE, denom = "all")
+PicrustAld_tumor_filtered <- PicrustAld_tumor[PicrustAld_tumor$kw.ep < 0.05, ] %>%
+  mutate(.,pathway = rownames(.)) %>%
+  left_join(.,mapPW,by = "pathway")
+print(PicrustAld_tumor_filtered)
+```
+## testing differential abundance accross different mucins
+###MUC13
+```{r}
+MetaData2_tumor <- MetaData2[MetaData2$Tissue.Type == "tumor",] %>%
+  drop_na(.,Strat.Score_MUC13_T)
+p2_PW_tumor <- p2PW[,MetaData2_tumor$Illumina.ID]
+
+PicrustAld_MUC13 <- aldex(reads = p2_PW_tumor, conditions = as.factor(MetaData2_tumor$Strat.Score_MUC13_T), test = "kw",effect = FALSE, denom = "all")
+PicrustAld_MUC13_Filtered <- PicrustAld_MUC13[PicrustAld_MUC13$kw.ep < 0.05, ] %>%
+  mutate(.,pathway = rownames(.)) %>%
+  left_join(.,mapPW,by = "pathway")
+print(PicrustAld_MUC13_Filtered)
+```
+###MUC1
+```{r}
+PicrustAld_MUC1 <- aldex(reads = p2_PW_tumor, conditions = MetaData2_tumor$Strat.Score_MUC1_T, test = "kw",effect = FALSE, denom = "all")
+PicrustAld_MUC1_Filtered <- PicrustAld_MUC1[PicrustAld_MUC1$kw.ep < 0.05, ] %>%
+  mutate(.,pathway = rownames(.)) %>%
+  left_join(.,mapPW,by = "pathway")
+print(PicrustAld_MUC1_Filtered)
+```
+###MUC5AC
+```{r}
+PicrustAld_MUC5AC <- aldex(reads = p2_PW_tumor, conditions = MetaData2_tumor$Strat.Score_MUC5AC_T, test = "kw",effect = FALSE, denom = "all")
+PicrustAld_MUC5AC_Filtered <- PicrustAld_MUC5AC[PicrustAld_MUC5AC$kw.ep < 0.05, ] %>%
+  mutate(.,pathway = rownames(.)) %>%
+  left_join(.,mapPW,by = "pathway")
+print(PicrustAld_MUC5AC_Filtered)
+```
+
+###MUC6
+```{r}
+PicrustAld_MUC6 <- aldex(reads = p2_PW_tumor, conditions = MetaData2_tumor$Strat.Score_MUC6_T, test = "kw",effect = FALSE, denom = "all")
+PicrustAld_MUC6_Filtered <- PicrustAld_MUC6[PicrustAld_MUC6$kw.ep < 0.05, ] %>%
+  mutate(.,pathway = rownames(.)) %>%
+  left_join(.,mapPW,by = "pathway")
+print(PicrustAld_MUC6_Filtered)
+```
+
+###MUC2
+```{r}
+PicrustAld_MUC2 <- aldex(reads = p2_PW_tumor, conditions = MetaData2_tumor$Strat.Score_MUC2_T, test = "kw",effect = FALSE, denom = "all")
+PicrustAld_MUC2_Filtered <- PicrustAld_MUC2[PicrustAld_MUC2$kw.ep < 0.05, ] %>%
+  mutate(.,pathway = rownames(.)) %>%
+  left_join(.,mapPW,by = "pathway")
+print(PicrustAld_MUC2_Filtered)
+```
+
+###MUC4
+```{r}
+PicrustAld_MUC4 <- aldex(reads = p2_PW_tumor, conditions = MetaData2_tumor$Strat.Score_MUC4_T, test = "kw",effect = FALSE, denom = "all")
+PicrustAld_MUC4_Filtered <- PicrustAld_MUC4[PicrustAld_MUC4$kw.ep < 0.05, ] %>%
+  mutate(.,pathway = rownames(.)) %>%
+  left_join(.,mapPW,by = "pathway")
+print(PicrustAld_MUC4_Filtered)
+```
+
+Plotting the Mucin phenotype - tissue overall and MUC13 differentially abundant pathways
+```{r}
+Tissue.Type <- MetaData[, c("Illumina.ID","Tissue.Type")]%>%
+  drop_na(., "Illumina.ID")
+Tissue.Type$Tissue.Type <- factor(Tissue.Type$Tissue.Type, levels = c("adjacent","noninflammed","tumor"),labels = c("adjacent","control","tumor"))
+
+p2PW_relAb_Ald <- p2PW %>% 
+  apply(., MARGIN = 2, FUN = function(x) x / sum(x))%>%
+  subset(., rownames(.) %in% PicrustAld_TissueOverall_Filtered$pathway) %>%
+  t %>%
+  as.data.frame(.)%>%
+  mutate(., Illumina.ID = row.names(.)) %>%
+  full_join(.,Tissue.Type, by = "Illumina.ID") %>%
+  gather(data = ., key = "pathway", value = "RelAb",1:23)%>%
+  left_join(.,mapPW,by = "pathway") %>%
+  drop_na(., RelAb)
+
+p2PWAld_Summary <- p2PW_relAb_Ald %>%
+  group_by(description, Tissue.Type)%>%
+  summarise(.data = . , CI = mean_cl_boot(RelAb))
+
+PicrustAld_OverallGraph <- ggplot(p2PWAld_Summary, aes(x = description,y = CI$y, color = Tissue.Type)) +
+  geom_bar(stat="identity", position = position_dodge(width = 0.8), fill = NA, size = 1, width = 0.5)+
+  theme_classic2() +
+  coord_flip()+
+  ggtitle(label = "Overall difference in pathway abundance")
+PicrustAld_OverallGraph
+
+PicrustAld_OverallWilcox <- compare_means(formula= RelAb ~ Tissue.Type, p2PW_relAb_Ald, method = "wilcox.test",group.by = "pathway") %>%
+  left_join(.,mapPW, by = "pathway")
+
+
+Mucin.Type <- MetaData[, c("Illumina.ID","Mucin.Phenotype")] %>%
+  drop_na(., "Illumina.ID")
+
+p2PW_T_relAb_Ald <- p2_PW_tumor %>%
+  apply(., MARGIN = 2, FUN = function(x) x / sum(x)) %>%
+  subset(., rownames(.) %in% PicrustAld_tumor_filtered$pathway)%>%
+  t %>%
+  as.data.frame(.)%>%
+  mutate(., Illumina.ID = row.names(.)) %>%
+  full_join(.,Mucin.Type, by = "Illumina.ID") %>%
+  gather(data = ., key = "pathway", value = "RelAb",1:10) %>%
+  left_join(.,mapPW,by = "pathway") %>%
+  drop_na(., RelAb)
+
+p2PW_T_Summary <- p2PW_T_relAb_Ald %>%
+  group_by(description, Mucin.Phenotype)%>%
+  summarise(.data = . , CI = mean_cl_boot(RelAb))
+
+PicrustAld_tumorGraph <- ggplot(p2PW_T_Summary, aes(x = description,y = CI$y, color = Mucin.Phenotype)) +
+  geom_bar(stat="identity", position = position_dodge(width = 0.8), fill = NA, size = 1, width = 0.5)+
+  geom_errorbar(aes(ymax = CI$ymax, ymin = CI$ymin), position = position_dodge(width = 0.8), width = 0.2)+
+  theme_classic2() +
+  coord_flip()+
+  ggtitle(label = "Mucin phenotype difference in pathway abundance")
+PicrustAld_tumorGraph
+
+PicrustAld_tumorWilcox <- compare_means(formula= RelAb ~ Mucin.Phenotype, p2PW_T_relAb_Ald, method = "wilcox.test",group.by = "pathway")%>%
+  left_join(.,mapPW, by = "pathway")
+
+MUC13.Strat <- MetaData[, c("Illumina.ID","Strat.Score_MUC13_T")] %>%
+  drop_na(.,"Illumina.ID")
+
+p2PW_MUC13_relAb_Ald <- p2_PW_tumor %>%
+  apply(., MARGIN = 2, FUN = function(x) x / sum(x)) %>%
+  subset(., rownames(.) %in% PicrustAld_MUC13_Filtered$pathway)%>%
+  t%>%
+  as.data.frame(.)%>%
+  mutate(., Illumina.ID = row.names(.)) %>%
+  full_join(.,MUC13.Strat, by = "Illumina.ID") %>%
+  gather(data = ., key = "pathway", value = "RelAb",1:82) %>%
+  left_join(.,mapPW,by = "pathway") %>%
+  drop_na(., "RelAb")%>%
+  drop_na(.,"Strat.Score_MUC13_T")
+
+p2PW_MUC13_Summary <- p2PW_MUC13_relAb_Ald %>%
+  group_by(description, Strat.Score_MUC13_T)%>%
+  summarise(.data = . , CI = mean_cl_boot(RelAb))%>%
+  mutate(., Strat.Score_MUC13_T = as.factor(Strat.Score_MUC13_T))
+
+PicrustAld_MUC13Graph <- ggplot(p2PW_MUC13_Summary, aes(x = description,y = CI$y, color = Strat.Score_MUC13_T)) +
+  geom_bar(stat="identity", position = position_dodge(width = 0.8), fill = NA, size = 1, width = 0.5)+
+  geom_errorbar(aes(ymax = CI$ymax, ymin = CI$ymin), position = position_dodge(width = 0.8), width = 0.2)+
+  stat_compare_means(method = "wilcox.test",comparisons = list(c("Gastric","Intestinal"),c("Gastric","Mixed"),c("Gastric","Null"),c("Intestinal","Mixed"),c("Intestinal","Null"),c("Mixed","Null")))+
+  theme_classic2() +
+  coord_flip()+
+  ggtitle(label = "MUC13 difference in pathway abundance")
+PicrustAld_MUC13Graph
+
+PicrustAld_MUC13Wilcox <- compare_means(formula= RelAb ~ Strat.Score_MUC13_T, p2PW_MUC13_relAb_Ald, method = "wilcox.test",group.by = "pathway")%>%
+  left_join(.,mapPW, by = "pathway") 
+  
+PicrustGraph1 <- cowplot::plot_grid(PicrustAld_OverallGraph,PicrustAld_tumorGraph,nrow = 2 , align = 'v', axis = 'l')
+
+ggarrange(PicrustGraph1, PicrustAld_MUC13Graph, ncol = 2)
+
+```
+```{r}
+MUC1.Strat <- MetaData[, c("Illumina.ID","Strat.Score_MUC1_T")] %>%
+  drop_na(.,"Illumina.ID")
+
+p2PW_MUC1_relAb_Ald <- p2_PW_tumor %>%
+  apply(., MARGIN = 2, FUN = function(x) x / sum(x)) %>%
+  subset(., rownames(.) %in% PicrustAld_MUC1_Filtered$pathway)%>%
+  t%>%
+  as.data.frame(.)%>%
+  mutate(., Illumina.ID = row.names(.)) %>%
+  full_join(.,MUC1.Strat, by = "Illumina.ID") %>%
+  gather(data = ., key = "pathway", value = "RelAb",1:6) %>%
+  left_join(.,mapPW,by = "pathway") %>%
+  drop_na(., "RelAb")%>%
+  drop_na(.,"Strat.Score_MUC1_T")
+
+p2PW_MUC1_Summary <- p2PW_MUC1_relAb_Ald %>%
+  group_by(description, Strat.Score_MUC1_T)%>%
+  summarise(.data = . , CI = mean_cl_boot(RelAb))%>%
+  mutate(., Strat.Score_MUC1_T = as.factor(Strat.Score_MUC1_T))
+
+MUC5AC.Strat <- MetaData[, c("Illumina.ID","Strat.Score_MUC5AC_T")] %>%
+  drop_na(.,"Illumina.ID")
+
+p2PW_MUC5AC_relAb_Ald <- p2_PW_tumor %>%
+  apply(., MARGIN = 2, FUN = function(x) x / sum(x)) %>%
+  subset(., rownames(.) %in% PicrustAld_MUC5AC_Filtered$pathway)%>%
+  t%>%
+  as.data.frame(.)%>%
+  mutate(., Illumina.ID = row.names(.)) %>%
+  full_join(.,MUC5AC.Strat, by = "Illumina.ID") %>%
+  gather(data = ., key = "pathway", value = "RelAb",1:55) %>%
+  left_join(.,mapPW,by = "pathway") %>%
+  drop_na(., "RelAb")%>%
+  drop_na(.,"Strat.Score_MUC5AC_T")
+
+p2PW_MUC5AC_Summary <- p2PW_MUC5AC_relAb_Ald %>%
+  group_by(description, Strat.Score_MUC5AC_T)%>%
+  summarise(.data = . , CI = mean_cl_boot(RelAb))%>%
+  mutate(., Strat.Score_MUC5AC_T = as.factor(Strat.Score_MUC5AC_T))
+
+MUC6.Strat <- MetaData[, c("Illumina.ID","Strat.Score_MUC6_T")] %>%
+  drop_na(.,"Illumina.ID")
+
+p2PW_MUC6_relAb_Ald <- p2_PW_tumor %>%
+  apply(., MARGIN = 2, FUN = function(x) x / sum(x)) %>%
+  subset(., rownames(.) %in% PicrustAld_MUC6_Filtered$pathway)%>%
+  t%>%
+  as.data.frame(.)%>%
+  mutate(., Illumina.ID = row.names(.)) %>%
+  full_join(.,MUC6.Strat, by = "Illumina.ID") %>%
+  gather(data = ., key = "pathway", value = "RelAb",1:105) %>%
+  left_join(.,mapPW,by = "pathway") %>%
+  drop_na(., "RelAb")%>%
+  drop_na(.,"Strat.Score_MUC6_T")
+
+p2PW_MUC6_Summary <- p2PW_MUC6_relAb_Ald %>%
+  group_by(description, Strat.Score_MUC6_T)%>%
+  summarise(.data = . , CI = mean_cl_boot(RelAb))%>%
+  mutate(., Strat.Score_MUC6_T = as.factor(Strat.Score_MUC6_T))
+
+MUC2.Strat <- MetaData[, c("Illumina.ID","Strat.Score_MUC2_T")] %>%
+  drop_na(.,"Illumina.ID")
+
+p2PW_MUC2_relAb_Ald <- p2_PW_tumor %>%
+  apply(., MARGIN = 2, FUN = function(x) x / sum(x)) %>%
+  subset(., rownames(.) %in% PicrustAld_MUC2_Filtered$pathway)%>%
+  t%>%
+  as.data.frame(.)%>%
+  mutate(., Illumina.ID = row.names(.)) %>%
+  full_join(.,MUC2.Strat, by = "Illumina.ID") %>%
+  gather(data = ., key = "pathway", value = "RelAb",1:3) %>%
+  left_join(.,mapPW,by = "pathway") %>%
+  drop_na(., "RelAb")%>%
+  drop_na(.,"Strat.Score_MUC2_T")
+
+p2PW_MUC2_Summary <- p2PW_MUC2_relAb_Ald %>%
+  group_by(description, Strat.Score_MUC2_T)%>%
+  summarise(.data = . , CI = mean_cl_boot(RelAb))%>%
+  mutate(., Strat.Score_MUC2_T = as.factor(Strat.Score_MUC2_T))
+
+MUC4.Strat <- MetaData[, c("Illumina.ID","Strat.Score_MUC4_T")] %>%
+  drop_na(.,"Illumina.ID")
+
+p2PW_MUC4_relAb_Ald <- p2_PW_tumor %>%
+  apply(., MARGIN = 2, FUN = function(x) x / sum(x)) %>%
+  subset(., rownames(.) %in% PicrustAld_MUC4_Filtered$pathway)%>%
+  t%>%
+  as.data.frame(.)%>%
+  mutate(., Illumina.ID = row.names(.)) %>%
+  full_join(.,MUC4.Strat, by = "Illumina.ID") %>%
+  gather(data = ., key = "pathway", value = "RelAb",1:4) %>%
+  left_join(.,mapPW,by = "pathway") %>%
+  drop_na(., "RelAb")%>%
+  drop_na(.,"Strat.Score_MUC4_T")
+
+p2PW_MUC4_Summary <- p2PW_MUC4_relAb_Ald %>%
+  group_by(description, Strat.Score_MUC4_T)%>%
+  summarise(.data = . , CI = mean_cl_boot(RelAb))%>%
+  mutate(., Strat.Score_MUC4_T = as.factor(Strat.Score_MUC4_T))
+
+```
+
+writing the different datasets to an excel file
+```{r}
+PicrustList <- list(Overall = PicrustAld_TissueOverall_Filtered,MucinPhenotype = PicrustAld_tumor,MUC1 = PicrustAld_MUC1_Filtered,MUC5AC=PicrustAld_MUC5AC_Filtered,MUC6 = PicrustAld_MUC6_Filtered, MUC2 = PicrustAld_MUC2_Filtered,MUC4 = PicrustAld_MUC4_Filtered, MUC13= PicrustAld_MUC13_Filtered)
+writexl::write_xlsx(PicrustList, path = "Picrust_DifferentialAb.xlsx")
+
+PicrustSummaryList <- list(MUC1 = p2PW_MUC1_Summary, MUC5AC = p2PW_MUC5AC_Summary, MUC6 = p2PW_MUC6_Summary, MUC2 = p2PW_MUC2_Summary, MUC4 = p2PW_MUC4_Summary, MUC13 = p2PW_MUC13_Summary)
+PicrustSummaryList <- lapply(PicrustSummaryList, function(x) unnest(x, cols = c("CI")))
+writexl::write_xlsx(PicrustSummaryList, path = "Picrust_DifferentialAb_Summaries.xlsx")
+```
+

@@ -1,0 +1,36 @@
+---
+title: "Initializing_workenvironment"
+author: "Baptiste Oosterlinck"
+date: "12/13/2021"
+output: html_document
+---
+
+Setting seed for reproducibility across runs of the script
+
+```{r setup, include=FALSE}
+set.seed(1995)
+#source(file = "AutomatedLibraryLoading.R")
+```
+
+Loading the required packages
+
+```{r setup, include=FALSE}
+packages = c("dada2", "phyloseq", "Biostrings","gridExtra","ggplot2","DECIPHER","phangorn","readxl","tidyverse","ggpubr","readxl","vegan","microbiome","tidyr","ggplot2","ggpubr","ALDEx2","dplyr","biomformat","ape","boot","viridis","survminer","survival","data.table","cooccur","visNetwork","tidygraph","ggraph","network","Hmisc","magrittr")
+
+# Packages loading
+invisible(lapply(packages, library, character.only = TRUE))
+rc <- dada2:::rc
+
+rm(packages)
+```
+
+Setting the working directories for the analysis
+
+```{r setup, include=FALSE}
+wd_dir <- "/mnt/WorkDrive/Baptiste/GastricMicrobiome"
+refDB_path <- "/mnt/WorkDrive/Baptiste/ReferenceDatabases/Silva/V138/DECIPHER_formated/SILVA_SSU_r138_2019.RData"
+fastq_dir <- "/mnt/WorkDrive/Baptiste/GastricMicrobiome/Pooled_BE_LI"
+
+#Clinical data file
+meta_file <- "/mnt/WorkDrive/Baptiste/GastricMicrobiome/ClinicalData/GC_overview_final07022022.xlsx"
+```

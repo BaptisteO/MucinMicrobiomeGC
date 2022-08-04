@@ -1,0 +1,159 @@
+---
+title: "6. Beta_diversity_analysis"
+author: "Baptiste Oosterlinck"
+date: "2-3-2022"
+output: html_document
+---
+
+#1. calculating the B-diversity measures and plotting them:
+  ##A. Bray-Curtis - PCoA
+```{r}
+PCoA_Bray <- ordinate(agglom_relAb2, method = "PCoA", distance = "bray")
+
+PCoA_Bray_plot <- plot_ordination(agglom_relAb2, PCoA_Bray , type = "samples", axes = 1:2, color = "Mucin.Phenotype")+
+  facet_wrap(~Tissue.Type)+
+  ggtitle("PCoA of Bray-Curtis")+
+  stat_ellipse(level = 0.95)+
+  theme_classic2()
+PCoA_Bray_plot
+```
+  ##B. Bray-Curtis - NMDS
+```{r}
+NMDS_Bray <- ordinate(agglom_relAb2, method = "NMDS", distance = "bray")
+
+NMDS_Bray_plot <- plot_ordination(agglom_relAb2, NMDS_Bray , type = "samples", axes = 1:2, color = "Mucin.Phenotype")+
+  facet_wrap(~Tissue.Type)+
+  ggtitle("NMDS of Bray-Curtis")+
+  theme_classic2()
+NMDS_Bray_plot
+```
+  ##C. Jaccard - PCoA
+```{r}
+PCoA_Jaccard <- ordinate(agglom_relAb2, method = "PCoA", distance = "jaccard")
+
+PCoA_Jaccard_plot <- plot_ordination(agglom_relAb2, PCoA_Jaccard , type = "samples", axes = 1:2, color = "Mucin.Phenotype")+
+  facet_wrap(~Tissue.Type)+
+  ggtitle("PCoA of Jaccard")+
+  theme_classic2()
+PCoA_Jaccard_plot
+```
+  
+  ##D. Jaccard - NMDS
+```{r}
+NMDS_Jaccard <- ordinate(agglom_relAb2, method = "NMDS", distance = "jaccard")
+
+NMDS_Jaccard_plot <- plot_ordination(agglom_relAb2, NMDS_Jaccard , type = "samples", axes = 1:2, color = "Mucin.Phenotype")+
+  facet_wrap(~Tissue.Type)+
+  ggtitle("NMDS of Jaccard")+
+  theme_classic2()
+NMDS_Jaccard_plot
+```
+  ##E. Unifrac (unweighted) - PCoA
+```{r}
+PCoA_UnifracUnw <- ordinate(agglom_relAb2, method = "PCoA", distance = "unifrac",weighted = FALSE)
+
+PCoA_UnifracUnw_plot <- plot_ordination(agglom_relAb2, PCoA_UnifracUnw , type = "samples", axes = 1:2, color = "Mucin.Phenotype")+
+  facet_wrap(~Tissue.Type)+
+  ggtitle("PCoA of unweighted Unifrac")+
+  theme_classic2()
+PCoA_UnifracUnw_plot
+```
+  ##F. Unifrac (unweigthed) - NMDS
+```{r}
+NMDS_UnifracUnw <- ordinate(agglom_relAb2, method = "NMDS", distance = "unifrac",weighted = FALSE)
+
+NMDS_UnifracUnw_plot <- plot_ordination(agglom_relAb2, NMDS_UnifracUnw , type = "samples", axes = 1:2, color = "Mucin.Phenotype")+
+  facet_wrap(~Tissue.Type)+
+  ggtitle("NMDS of unweighted unifrac")+
+  theme_classic2()
+NMDS_UnifracUnw_plot
+```
+  ##G. Unifrac (weighted) - PCoA
+```{r}
+PCoA_UnifracW <- ordinate(agglom_relAb2, method = "PCoA", distance = "unifrac",weighted = TRUE)
+
+PCoA_UnifracW_plot <- plot_ordination(agglom_relAb2, PCoA_UnifracW , type = "samples", axes = 1:2, color = "Mucin.Phenotype")+
+  facet_wrap(~Tissue.Type)+
+  stat_ellipse(level = 0.95)+
+  ggtitle("PCoA of weighted unifrac")+
+  theme_classic2()
+PCoA_UnifracW_plot
+```
+  ##H. Unifrac (weigthed) - NMDS  
+```{r}
+NMDS_UnifracW <- ordinate(agglom_relAb2, method = "NMDS", distance = "unifrac",weighted = TRUE)
+
+NMDS_UnifracW_plot <- plot_ordination(agglom_relAb2, NMDS_UnifracW , type = "samples", axes = 1:2, color = "Mucin.Phenotype")+
+  facet_wrap(~Tissue.Type)+
+  ggtitle("NMDS of weighted unifrac")+
+  theme_classic2()
+NMDS_UnifracW_plot
+```
+
+#2. arranging the plots in a grid
+```{r}
+BDiv_plotList <- list(PCoA_Bray_plot,
+                      NMDS_Bray_plot,
+                      PCoA_Jaccard_plot,
+                      NMDS_Jaccard_plot,
+                      PCoA_UnifracUnw_plot,
+                      NMDS_UnifracUnw_plot,
+                      PCoA_UnifracW_plot,
+                      NMDS_UnifracW_plot)
+
+BetaDiversity_All <- ggarrange(plotlist = BDiv_plotList, ncol = 2 , common.legend = TRUE)
+
+```
+
+```{r}
+MetaData_3 <- MetaData_2
+MetaData_3$Tissue.Type <- factor(MetaData_3$Tissue.Type, levels = c("noninflammed","adjacent","tumor"),labels = c("Control","Adjacent","Tumor"), ordered = TRUE)
+levels(MetaData_3$Mucin.Phenotype) <- c(levels(MetaData_3$Mucin.Phenotype),"Control")
+MetaData_3[MetaData_3$Tissue.Type == "Control","Mucin.Phenotype"] <- "Control" 
+
+agglom_relAb_PCOA <- agglom_relAb2
+sample_data(agglom_relAb_PCOA) <- MetaData_3
+
+PCoA_Bray <- ordinate(agglom_relAb_PCOA, method = "PCoA", distance = "bray")
+
+PCoA_Bray_plot <- plot_ordination(agglom_relAb_PCOA, PCoA_Bray , type = "samples", axes = 1:2, color = "Mucin.Phenotype")+
+  facet_wrap(~Tissue.Type)+
+  stat_ellipse(level = 0.95)+
+  ggtitle("PCoA of Bray-Curtis")+
+  scale_fill_viridis(option = "turbo",discrete = TRUE)+
+  theme_classic2()
+PCoA_Bray_plot
+
+PCoA_UnifracW <- ordinate(agglom_relAb_PCOA, method = "PCoA", distance = "unifrac",weighted = TRUE)
+
+PCoA_UnifracW_plot <- plot_ordination(agglom_relAb_PCOA, PCoA_UnifracW , type = "samples", axes = 1:2, color = "Mucin.Phenotype")+
+  ggtitle("PCoA of weighted unifrac")+
+  stat_ellipse(level = 0.95)+
+  scale_fill_viridis(option = "turbo",discrete = TRUE)+
+    facet_wrap(~Tissue.Type)+
+  theme_classic2()
+PCoA_UnifracW_plot
+
+ggarrange(PCoA_Bray_plot,PCoA_UnifracW_plot,ncol = 2, common.legend = TRUE,legend = "bottom")
+```
+##anosim analysis
+```{r}
+anosim_df <- as.data.frame(agglom_relAb2@otu_table) %>%
+  mutate(.,Illumina.ID = rownames(.)) %>%
+  merge(.,MetaData[,c("Illumina.ID","Tissue.Type","Mucin.Phenotype")],by = "Illumina.ID")
+
+anosim(anosim_df[,2:631],grouping = anosim_df$Tissue.Type,distance = "bray",permutations=9999)
+
+anosim_df_tumor <- subset(anosim_df, anosim_df$Tissue.Type == "tumor") %>%
+  drop_na(., Mucin.Phenotype)
+
+dada_pheno <- subset_samples(agglom_relAb2, Tissue.Type == "tumor") %>%
+  subset_samples(.,is.na(Mucin.Phenotype) == FALSE)
+
+phyloseq::distance(dada_pheno, method = "wunifrac") %>%
+  anosim(.,grouping = get_variable(dada_pheno,"Mucin.Phenotype"))
+
+anosim(anosim_df_tumor[,2:631],grouping = anosim_df_tumor$Mucin.Phenotype,distance = "bray",permutations=9999)
+anosim(anosim_df_tumor[,2:631],grouping = anosim_df_tumor$Mucin.Phenotype,distance = "unifrac",permutations=9999)
+```
+

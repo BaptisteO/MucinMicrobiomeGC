@@ -1,0 +1,451 @@
+---
+title: "3. Alpha_diversity_analysis"
+author: "Baptiste Oosterlinck"
+date: "16-2-2022"
+output: html_document
+---
+
+##1. Mergin the phyloseq object with an updated version of the sample data
+
+```{r}
+#dropping the not sequenced samples and setting the row names to the illumina id's
+MetaData_2 <- drop_na(data = MetaData, "Illumina.ID")
+row.names(MetaData_2) <- MetaData_2$Illumina.ID
+
+#loading the new metadata into the phyloseq object
+sample_data(agglom_BA2) <- MetaData_2
+sample_data(agglom_relAb2) <- MetaData_2
+sample_data(agglom_BA3) <- MetaData_2
+sample_data(agglom_relAb3) <- MetaData_2
+
+#removing P18 from the dataset as it can't serve as control due to H. pylori infection
+agglom_BA2 <- subset_samples(agglom_BA2, !Patient.ID %in% c("171574812"))
+agglom_relAb2 <- subset_samples(agglom_relAb2, !Patient.ID %in% c("171574812"))
+agglom_BA3 <- subset_samples(agglom_BA3, !Patient.ID %in% c("171574812"))
+agglom_relAb3 <- subset_samples(agglom_relAb2, !Patient.ID %in% c("171574812"))
+```
+
+##2. Plot the classical barplot of the relative abundance of all the samples according to their tissue type (adjacent, tumor, of noniflammed)
+
+```{r}
+#subsetting for the Gastric cancer samples and plotting
+agglom_relAb_GC <- subset_samples(agglom_relAb2, Tissue.Type %in% c("tumor","adjacent"))
+#subsetting for the functional dyspepsia samples and plotting
+agglom_relAb_FD <- subset_samples(agglom_relAb2, Tissue.Type %in% c("noninflammed"))
+
+BarMicrobiome_GC <- plot_bar(agglom_relAb_GC,x = "Patient.ID", fill = "Order") +
+    facet_wrap(~ Tissue.Type,nrow = 2) +
+    guides(fill = guide_legend(ncol = 6)) +
+    theme(axis.text.x=element_text(size=7),legend.position = "bottom",legend.text = element_text(size = 8))
+
+BarMicrobiome_PD <- plot_bar(agglom_relAb_FD,x = "Illumina.ID", fill = "Order") +
+    facet_wrap(~Tissue.Type) +
+    guides(fill = guide_legend(ncol = 6)) +
+    theme(axis.text.x=element_text(size=7),legend.position = "bottom",legend.text = element_text(size = 8))
+
+ggarrange(BarMicrobiome_GC,BarMicrobiome_PD,ncol = 2,common.legend = TRUE)
+
+```
+
+##3. patient 18 clearly has a Helicobacter infection which fully dominates the microbiome
+```{r}
+#removing P18 and all non-paired samples
+nonPaired.PID <- c("581227 064A40","P00145809","G1988","431014 063A05","P00141446","P00133049","270604 038A63")
+  
+agglom_relAb_FD_P <- subset_samples(agglom_relAb_FD, !Patient.ID %in% nonPaired.PID)
+agglom_relAb_GC_P <- subset_samples(agglom_relAb_GC, !Patient.ID %in% nonPaired.PID)
+agglom_relAb_P <- subset_samples(agglom_relAb2, !Patient.ID %in% nonPaired.PID)
+
+BarMicrobiome_GC2 <- plot_bar(agglom_relAb_GC_P,x = "Patient.ID", fill = "Order") +
+    facet_wrap(~ Tissue.Type,nrow = 2) +
+    guides(fill = guide_legend(ncol = 8)) +
+    theme(axis.text.x=element_text(size=7),legend.position = "bottom",legend.text = element_text(size = 8))
+
+BarMicrobiome_PD2 <- plot_bar(agglom_relAb_FD_P,x = "Illumina.ID", fill = "Order") +
+    facet_wrap(~Tissue.Type) +
+    guides(fill = guide_legend(ncol = 8)) +
+    theme(axis.text.x=element_text(size=7),legend.position = "bottom",legend.text = element_text(size = 8))
+
+ggarrange(BarMicrobiome_GC2,BarMicrobiome_PD2,ncol = 2,common.legend = TRUE)
+```
+
+##4. Summary barplot of the mean abundance
+
+```{r}
+agglom_BA2_T <- subset_samples(agglom_BA2, Tissue.Type == "tumor") %>%
+  tax_glom(.,"Phylum")
+  
+agglom_BA2_T_Gastric <- subset_samples(agglom_BA2_T, Mucin.Phenotype == "Gastric")
+agglom_BA2_T_Intestinal <- subset_samples(agglom_BA2_T, Mucin.Phenotype == "Intestinal")
+agglom_BA2_T_Mixed <- subset_samples(agglom_BA2_T, Mucin.Phenotype == "Mixed")
+agglom_BA2_T_Null <- subset_samples(agglom_BA2_T, Mucin.Phenotype == "Null")
+  
+agglom_BA2_A <- subset_samples(agglom_BA2, Tissue.Type == "adjacent")  %>%
+  tax_glom(.,"Phylum") 
+agglom_BA2_C <- subset_samples(agglom_BA2, Tissue.Type == "noninflammed") %>%
+  tax_glom(.,"Phylum")
+
+#dividing Proteobacteria into Helicobacter and Non-Helicobacter reads
+
+TempCamp <- subset_taxa(agglom_BA2, Phylum == "Campilobacterota")
+TempCamp_Helico <- subset_taxa(TempCamp, Genus == "Helicobacter")
+TempCamp_nonHelico <- subset_taxa(TempCamp, Genus != "Helicobacter")
+
+ASV_total_abundance <- data.frame(Tumor = taxa_sums(agglom_BA2_T), 
+                                  Gastric = taxa_sums(agglom_BA2_T_Gastric),
+                                  Intestinal = taxa_sums(agglom_BA2_T_Intestinal),
+                                  Mixed = taxa_sums(agglom_BA2_T_Mixed),
+                                  Null = taxa_sums(agglom_BA2_T_Null),
+                                  Adjacent =  taxa_sums(agglom_BA2_A), 
+                                  Control =  taxa_sums(agglom_BA2_C))
+
+ASV_Camp_abundance <- data.frame(Tumor = c(subset_samples(TempCamp_Helico, Tissue.Type == "tumor") %>%
+                                   tax_glom(.,"Genus") %>%
+                                   taxa_sums(),
+                                   subset_samples(TempCamp_nonHelico, Tissue.Type == "tumor") %>%
+                                   tax_glom(.,"Genus") %>%
+                                   taxa_sums()%>%
+                                   sum())
+                                 ,Gastric = c(subset_samples(TempCamp_Helico, Tissue.Type == "tumor" & Mucin.Phenotype == "Gastric") %>%
+                                   tax_glom(.,"Genus") %>%
+                                   taxa_sums()
+                                 ,subset_samples(TempCamp_nonHelico, Tissue.Type == "tumor" & Mucin.Phenotype == "Gastric") %>%
+                                   tax_glom(.,"Genus") %>%
+                                   taxa_sums() %>%
+                                   sum())
+                                 ,Intestinal = c(subset_samples(TempCamp_Helico, Tissue.Type == "tumor" & Mucin.Phenotype == "Intestinal") %>%
+                                   tax_glom(.,"Genus") %>%
+                                   taxa_sums()
+                                 , subset_samples(TempCamp_nonHelico, Tissue.Type == "tumor" & Mucin.Phenotype == "Intestinal") %>%
+                                   tax_glom(.,"Genus") %>%
+                                   taxa_sums() %>%
+                                   sum())
+                                 ,Mixed = c(subset_samples(TempCamp_Helico, Tissue.Type == "tumor" & Mucin.Phenotype == "Mixed") %>%
+                                   tax_glom(.,"Genus") %>%
+                                   taxa_sums()
+                                 , subset_samples(TempCamp_nonHelico, Tissue.Type == "tumor" & Mucin.Phenotype == "Mixed") %>%
+                                   tax_glom(.,"Genus") %>%
+                                   taxa_sums() %>%
+                                   sum())
+                                 ,Null = c(subset_samples(TempCamp_Helico, Tissue.Type == "tumor" & Mucin.Phenotype == "Null") %>%
+                                   tax_glom(.,"Genus") %>%
+                                   taxa_sums()
+                                 , subset_samples(TempCamp_nonHelico, Tissue.Type == "tumor" & Mucin.Phenotype == "Null") %>%
+                                   tax_glom(.,"Genus") %>%
+                                   taxa_sums() %>%
+                                   sum())
+                                 ,Adjacent = c(subset_samples(TempCamp_Helico, Tissue.Type == "adjacent") %>%
+                                   tax_glom(.,"Genus") %>%
+                                   taxa_sums()
+                                 , subset_samples(TempCamp_nonHelico, Tissue.Type == "adjacent") %>%
+                                   tax_glom(.,"Genus") %>%
+                                   taxa_sums() %>%
+                                   sum())
+                                 ,Control = c(subset_samples(TempCamp_Helico, Tissue.Type == "noninflammed") %>%
+                                   tax_glom(.,"Genus") %>%
+                                   taxa_sums()
+                                 , subset_samples(TempCamp_nonHelico, Tissue.Type == "noninflammed") %>%
+                                   tax_glom(.,"Genus") %>%
+                                   taxa_sums()%>%
+                                   sum()))
+
+ASV_total <- apply(ASV_total_abundance, MARGIN = 2, function(x) sum(x))
+
+ASV_total_relAbundance <- apply(ASV_total_abundance, MARGIN = 2, function(x) (x/sum(x))*100) %>%
+  as.data.frame() %>%
+  mutate(.,ASV = row.names(.))
+
+ASV_total_abundance <- ASV_total_abundance %>%
+  as.data.frame() %>%
+  mutate(.,ASV = row.names(.))
+
+ASV_taxonomy <- tax_table(agglom_BA2_T) %>%
+  as.data.frame(.)%>%
+  mutate(., ASV = row.names(.))
+
+ASV_total <- apply(ASV_total_abundance, MARGIN = 2, function(x) sum(x))
+ASV_Camp_relAbundance <- t(apply(ASV_Camp_abundance, MARGIN = 1, function(x) 100 * x / ASV_total))
+
+ASV_total_relAbundance <- full_join(ASV_taxonomy, ASV_total_relAbundance, by = "ASV")
+ASV_total_abundance <- full_join(ASV_taxonomy, ASV_total_abundance, by = "ASV")
+
+ASV_total_relAbundance <- ASV_total_relAbundance[,c("Phylum","Control","Adjacent","Tumor","Gastric","Intestinal","Mixed","Null")]
+
+rownames(ASV_total_relAbundance) <- ASV_total_relAbundance$Phylum
+
+chitest_overall <- chisq.test(x= ASV_total_relAbundance[,c("Control","Adjacent","Tumor")])
+chitest_camp_O <- chisq.test(x = ASV_Camp_relAbundance[2, c("Control","Adjacent","Tumor")])
+chitest_camp_m <- chisq.test(x = ASV_Camp_relAbundance[2, c("Control","Gastric","Intestinal","Mixed","Null")])
+
+print(chitest_camp_O)
+print(chitest_camp_m)
+
+ASV_total_relAbundance$Chi2_overall <- NA
+ASV_total_relAbundance$Chi2_pheno <- NA
+
+for (phy in ASV_total_relAbundance$Phylum){
+  ASV_temp_overall <- ASV_total_relAbundance[ASV_total_relAbundance$Phylum == phy,c("Control", "Adjacent","Tumor")]
+  ASV_temp_tumor <- ASV_total_relAbundance[ASV_total_relAbundance$Phylum == phy,c("Control","Gastric","Intestinal","Mixed","Null")]
+  ASV_total_relAbundance$Chi2_overall[ASV_total_relAbundance$Phylum == phy] <- chisq.test(ASV_temp_overall)$p.value
+  ASV_total_relAbundance$Chi2_pheno[ASV_total_relAbundance$Phylum == phy] <- chisq.test(ASV_temp_tumor)$p.value
+}
+
+writexl::write_xlsx(ASV_total_relAbundance, path = "ProportionalAnalysis_Phylum.xlsx")
+rm(ASV_total_abundance,nonPaired.PID,phy)
+
+ASV_total_relAbundance_long <- gather(data = ASV_total_relAbundance, key = Tissue.Type, value = Relative.Abundance, 2:8)
+BarSummary_Phylum <- ggplot(data =  ASV_total_relAbundance_long, aes(x = Tissue.Type, y = Relative.Abundance, fill = Phylum))+
+  geom_bar(stat = "identity", color = "black")+
+  scale_x_discrete(guide = guide_axis(angle = 90))+
+  ylab("Relative abundance")+
+  xlab("")+
+  guides(fill = guide_legend(ncol = 1))+
+  scale_fill_viridis(option = "turbo",discrete = TRUE)+
+  theme_classic2()
+BarSummary_Phylum
+
+rm(ASV_taxonomy,ASV_temp_overall,ASV_temp_tumor,ASV_total_relAbundance_long,agglom_BA2_A,agglom_BA2_C,agglom_BA2_T,agglom_BA2_T_Gastric,agglom_BA2_T_Intestinal,agglom_BA2_T_Mixed,agglom_BA2_T_Null)
+```
+
+##5. calculating the diversity measures we are interested in:
+  - Shanon
+  - Chao1
+  - Unifrac (weighted and unweighted)
+  - Simpson
+  - Richness
+  
+```{r}
+#calculating the indexes of interest
+Alpha.Div <- microbiome::alpha(agglom_relAb2,index = c("observed","diversity_shannon","chao1","diversity_inverse_simpson"))
+Alpha.Div$Illumina.ID <- row.names(Alpha.Div)
+
+#getting the sample data from the phyloseq object and merging it with the alpha diversity measures
+AlphaDiv_DF <- sample_data(agglom_relAb2) %>%
+  data.frame(.) %>%
+  merge(.,Alpha.Div, by = "Illumina.ID")
+```
+
+##6. plotting the different diversity measures according the different clinical parameters
+
+```{r}
+#creating long format for the mucin data
+AlphaDiv_long <- gather(data = AlphaDiv_DF , key = "Index", value = "Value",  67:70)
+AlphaDiv_long$Mucin.Phenotype <- factor(AlphaDiv_long$Mucin.Phenotype, levels = c("control","adjacent","tumor","Gastric","Intestinal","Mixed","Null"),labels =c("control","adjacent","tumor","Gastric","Intestinal","Mixed","Null"))
+AlphaDiv_long[AlphaDiv_long$Tissue.Type == "noninflammed","Mucin.Phenotype"] <- "control"
+AlphaDiv_long[AlphaDiv_long$Tissue.Type == "adjacent","Mucin.Phenotype"] <- "adjacent"
+
+AlphaDiv_extended <- AlphaDiv_long %>%
+  filter(.,Tissue.Type == "tumor") %>%
+  mutate(.,Mucin.Phenotype = .$Tissue.Type) %>%
+  rbind(.,AlphaDiv_long)%>%
+  drop_na(.,Mucin.Phenotype)
+
+AlphaDiv_extended$Mucin.Phenotype <- droplevels(AlphaDiv_extended$Mucin.Phenotype) %>%
+  factor(.,levels = c("control","adjacent","tumor","Gastric","Intestinal","Mixed","Null"),labels =c("Control","Adjacent","Tumor","Gastric","Intestinal","Mixed","Null"),ordered = TRUE)
+
+#generating general plot for the mucin expression (control, adjacent, tumor)
+ALphaDiversity_boxplot <- AlphaDiv_extended %>%
+  ggplot(data = ., aes(x = Mucin.Phenotype , y = Value, color = Mucin.Phenotype))+
+  geom_boxplot()+
+  geom_point(position = position_jitter(seed = 1995,width = 0.15))+
+  facet_wrap(~Index,scales = "free_y")+
+  scale_x_discrete(guide = guide_axis(angle = 90))+
+  stat_compare_means(aes(label = ..p.signif..),hide.ns = TRUE,method = "wilcox.test",comparisons = list(c("Gastric","Intestinal"),c("Intestinal","Mixed"),c("Mixed","Null"),c("Gastric","Mixed"),c("Gastric","Null"),c("Intestinal","Null")))+
+  theme_classic2()
+ALphaDiversity_boxplot
+
+#c("Control","Adjacent"),c("Adjacent","Tumor"),c("Control","Tumor")
+#c("Control","Gastric"),c("Control","Intestinal"),c("Control","Mixed"),c("Control","Null")
+#c("Gastric","Intestinal"),c("Intestinal","Mixed"),c("Mixed","Null"),c("Gastric","Mixed"),c("Gastric","Null"),"Intestinal","Null")
+
+
+
+AlphaDiv_DF$Tissue.Type <- factor(AlphaDiv_DF$Tissue.Type, levels = c("noninflammed", "adjacent", "tumor"), labels = c("control","adjacent", "tumor"), ordered = TRUE)
+Indexes <- c("observed","diversity_shannon","chao1","diversity_inverse_simpson")
+MUC_pheno <- levels(AlphaDiv_DF$Mucin.Phenotype)
+AlphaDiv_DF2 <- drop_na(AlphaDiv_DF, "Mucin.Phenotype")
+
+plotList = list()
+for(ind in Indexes){
+  diversity_boxplot <- ggpaired(data = AlphaDiv_DF2, x = "Tissue.Type", y= ind , id = "Patient.ID", color = "Mucin.Phenotype", title = ind)+
+    scale_x_discrete(guide = guide_axis(angle = 90))+
+    facet_wrap(~Mucin.Phenotype, nrow = 1)+
+    theme(panel.spacing = unit(0,"lines"), axis.title.x = element_blank(), axis.title.y = element_blank())
+  
+  diversity_boxplot$layers <- diversity_boxplot$layers[-2]
+    plotList[[ind]] = diversity_boxplot
+}
+
+ggarrange(plotlist = plotList, common.legend = TRUE)
+
+Index_adjacent_Temp <- AlphaDiv_DF[AlphaDiv_DF$Tissue.Type == "adjacent",c("Patient.ID",Indexes,"Mucin.Phenotype")]
+Index_tumor_Temp <- AlphaDiv_DF[AlphaDiv_DF$Tissue.Type == "tumor",c("Patient.ID",Indexes,"Mucin.Phenotype")]
+
+WilCox_Index <- list()
+for (ind in Indexes){
+  for (pheno in MUC_pheno){
+    Index_A <- Index_adjacent_Temp[Index_adjacent_Temp$Mucin.Phenotype == pheno, c("Patient.ID",ind)]
+    Index_T <- Index_tumor_Temp[Index_tumor_Temp$Mucin.Phenotype == pheno, c("Patient.ID",ind)]
+    Index_Temp <- full_join(Index_A, Index_T, by = "Patient.ID") %>%
+      drop_na(.,"Patient.ID")
+    WilCox_Index[[paste0(ind,"_",pheno,"_Paired")]] <- wilcox.test(x = Index_Temp[,2], y = Index_Temp[,3] , paired = TRUE)$p.value
+    WilCox_Index[[paste0(ind,"_",pheno,"_UnPaired")]] <- wilcox.test(x = Index_Temp[,2], y = Index_Temp[,3] , paired = FALSE)$p.value
+  }
+}
+
+
+rm(MUC_pheno,AlphaDiv_DF,AlphaDiv_DF2,AlphaDiv_extended,AlphaDiv_long,BarMicrobiome_GC,BarMicrobiome_GC2,BarMicrobiome_PD,BarMicrobiome_PD2,Index_A,Index_adjacent_Temp,Index_T,Index_Temp,Index_tumor_Temp,plotList,ind,Indexes,pheno)
+
+WilCox_Index <- t(as.data.frame(WilCox_Index))
+```
+
+<!-- ## final plot of the diversity measures for the tumour samples -->
+
+<!-- ```{r} -->
+<!-- observed_boxplot_tumor <- ggplot(data = AlphaDiv_DF2[AlphaDiv_DF2$Tissue.Type == "tumor",], aes(x= Mucin.Phenotype, y = observed, color = Mucin.Phenotype))+ -->
+<!--   geom_boxplot()+ -->
+<!--   geom_point(aes(fill = Mucin.Phenotype))+ -->
+<!--   stat_compare_means()+ -->
+<!--   stat_compare_means(method = "wilcox.test",comparisons = list(c("Gastric","Intestinal"),c("Intestinal","Mixed"),c("Mixed","Null"),c("Gastric","Mixed"),c("Gastric","Null"),c("Intestinal","Null")))+ -->
+<!--   theme_classic2() -->
+<!-- observed_boxplot_tumor -->
+
+<!-- Shannon_boxplot_tumor <- ggplot(data = AlphaDiv_DF2[AlphaDiv_DF2$Tissue.Type == "tumor",], aes(x= Mucin.Phenotype, y = diversity_shannon, color = Mucin.Phenotype))+ -->
+<!--   geom_boxplot()+ -->
+<!--   geom_point(aes(fill = Mucin.Phenotype))+ -->
+<!--   stat_compare_means()+ -->
+<!--   stat_compare_means(method = "wilcox.test",comparisons = list(c("Gastric","Intestinal"),c("Intestinal","Mixed"),c("Mixed","Null"),c("Gastric","Mixed"),c("Gastric","Null"),c("Intestinal","Null")))+ -->
+<!--   theme_classic2() -->
+<!-- Shannon_boxplot_tumor -->
+
+<!-- chao_boxplot_tumor <- ggplot(data = AlphaDiv_DF2[AlphaDiv_DF2$Tissue.Type == "tumor",], aes(x= Mucin.Phenotype, y = chao1, color = Mucin.Phenotype))+ -->
+<!--   geom_boxplot()+ -->
+<!--   geom_point(aes(fill = Mucin.Phenotype))+ -->
+<!--   stat_compare_means()+ -->
+<!--   stat_compare_means(method = "wilcox.test",comparisons = list(c("Gastric","Intestinal"),c("Intestinal","Mixed"),c("Mixed","Null"),c("Gastric","Mixed"),c("Gastric","Null"),c("Intestinal","Null")))+ -->
+<!--   theme_classic2() -->
+<!-- chao_boxplot_tumor -->
+
+<!-- Simpson_boxplot_tumor <- ggplot(data = AlphaDiv_DF2[AlphaDiv_DF2$Tissue.Type == "tumor",], aes(x= Mucin.Phenotype, y = diversity_inverse_simpson, color = Mucin.Phenotype))+ -->
+<!--   geom_boxplot()+ -->
+<!--   geom_point(aes(fill = Mucin.Phenotype))+ -->
+<!--   stat_compare_means()+ -->
+<!--   stat_compare_means(method = "wilcox.test",comparisons = list(c("Gastric","Intestinal"),c("Intestinal","Mixed"),c("Mixed","Null"),c("Gastric","Mixed"),c("Gastric","Null"),c("Intestinal","Null")))+ -->
+<!--   theme_classic2() -->
+<!-- Simpson_boxplot_tumor -->
+
+<!-- ggarrange(observed_boxplot_tumor,Shannon_boxplot_tumor,chao_boxplot_tumor,Simpson_boxplot_tumor, common.legend = TRUE) -->
+<!-- ``` -->
+
+<!-- ##final plot of the diversity measures for the normal samples -->
+
+<!-- ```{r} -->
+<!-- AlphaDiv_DF$Mucin.Phenotype <- factor(x = AlphaDiv_DF$Mucin.Phenotype, levels = c("Control","Gastric","Intestinal","Mixed","Null"),labels =c("Control","Gastric","Intestinal","Mixed","Null")) -->
+<!-- AlphaDiv_DF[AlphaDiv_DF$Tissue.Type == "control", "Mucin.Phenotype"] <- "Control" -->
+<!-- AlphaDiv_DF <- drop_na(AlphaDiv_DF, Mucin.Phenotype) -->
+
+<!-- observed_boxplot_normal <- ggplot(data = AlphaDiv_DF[AlphaDiv_DF$Tissue.Type != "tumor",], aes(x= Mucin.Phenotype, y = observed, color = Mucin.Phenotype))+ -->
+<!--   geom_boxplot()+ -->
+<!--   geom_point(aes(fill = Mucin.Phenotype))+ -->
+<!--   stat_compare_means()+ -->
+<!--   stat_compare_means(method = "wilcox.test",comparisons = list(c("Control", "Gastric"), c("Control", "Intestinal"),c("Control","Mixed"),c("Control","Null"),c("Gastric","Intestinal"),c("Intestinal","Mixed"),c("Mixed","Null"),c("Gastric","Mixed"),c("Gastric","Null"),c("Intestinal","Null")))+ -->
+<!--   theme_classic2() -->
+
+<!-- Shannon_boxplot_normal <- ggplot(data = AlphaDiv_DF[AlphaDiv_DF$Tissue.Type != "tumor",], aes(x= Mucin.Phenotype, y = diversity_shannon, color = Mucin.Phenotype))+ -->
+<!--   geom_boxplot()+ -->
+<!--   geom_point(aes(fill = Mucin.Phenotype))+ -->
+<!--   stat_compare_means()+ -->
+<!--   stat_compare_means(method = "wilcox.test",comparisons = list(c("Control", "Gastric"), c("Control", "Intestinal"),c("Control","Mixed"),c("Control","Null"),c("Gastric","Intestinal"),c("Intestinal","Mixed"),c("Mixed","Null"),c("Gastric","Mixed"),c("Gastric","Null"),c("Intestinal","Null")))+ -->
+<!--   theme_classic2() -->
+
+<!-- chao_boxplot_normal <- ggplot(data = AlphaDiv_DF[AlphaDiv_DF$Tissue.Type != "tumor",], aes(x= Mucin.Phenotype, y = chao1, color = Mucin.Phenotype))+ -->
+<!--   geom_boxplot()+ -->
+<!--   geom_point(aes(fill = Mucin.Phenotype))+ -->
+<!--   stat_compare_means()+ -->
+<!--   stat_compare_means(method = "wilcox.test",comparisons = list(c("Control", "Gastric"), c("Control", "Intestinal"),c("Control","Mixed"),c("Control","Null"),c("Gastric","Intestinal"),c("Intestinal","Mixed"),c("Mixed","Null"),c("Gastric","Mixed"),c("Gastric","Null"),c("Intestinal","Null")))+ -->
+<!--   theme_classic2() -->
+
+<!-- Simpson_boxplot_normal <- ggplot(data = AlphaDiv_DF[AlphaDiv_DF$Tissue.Type != "tumor",], aes(x= Mucin.Phenotype, y = diversity_inverse_simpson, color = Mucin.Phenotype))+ -->
+<!--   geom_boxplot()+ -->
+<!--   geom_point(aes(fill = Mucin.Phenotype))+ -->
+<!--   stat_compare_means()+ -->
+<!--   stat_compare_means(method = "wilcox.test",comparisons = list(c("Control", "Gastric"), c("Control", "Intestinal"),c("Control","Mixed"),c("Control","Null"),c("Gastric","Intestinal"),c("Intestinal","Mixed"),c("Mixed","Null"),c("Gastric","Mixed"),c("Gastric","Null"),c("Intestinal","Null")))+ -->
+<!--   theme_classic2() -->
+
+<!-- ggarrange(observed_boxplot_normal,Shannon_boxplot_normal,chao_boxplot_normal,Simpson_boxplot_normal, common.legend = TRUE) -->
+<!-- ``` -->
+
+<!-- ## final plot of the diversity measures for the adjacent tissue samples -->
+
+<!-- ```{r} -->
+<!-- AlphaDiv_DF$Mucin.Phenotype <- factor(x = AlphaDiv_DF$Mucin.Phenotype, levels = c("Control","Gastric","Intestinal","Mixed","Null"),labels =c("Control","Gastric","Intestinal","Mixed","Null")) -->
+<!-- AlphaDiv_DF[AlphaDiv_DF$Tissue.Type == "control", "Mucin.Phenotype"] <- "Control" -->
+<!-- AlphaDiv_DF <- drop_na(AlphaDiv_DF, Mucin.Phenotype) -->
+
+<!-- observed_boxplot_normal <- ggplot(data = AlphaDiv_DF[AlphaDiv_DF$Tissue.Type != "adjacent",], aes(x= Mucin.Phenotype, y = observed, color = Mucin.Phenotype))+ -->
+<!--   geom_boxplot()+ -->
+<!--   geom_point(aes(fill = Mucin.Phenotype))+ -->
+<!--   stat_compare_means()+ -->
+<!--   stat_compare_means(method = "wilcox.test",comparisons = list(c("Control", "Gastric"), c("Control", "Intestinal"),c("Control","Mixed"),c("Control","Null"),c("Gastric","Intestinal"),c("Intestinal","Mixed"),c("Mixed","Null"),c("Gastric","Mixed"),c("Gastric","Null"),c("Intestinal","Null")))+ -->
+<!--   theme_classic2() -->
+
+<!-- Shannon_boxplot_normal <- ggplot(data = AlphaDiv_DF[AlphaDiv_DF$Tissue.Type != "adjacent",], aes(x= Mucin.Phenotype, y = diversity_shannon, color = Mucin.Phenotype))+ -->
+<!--   geom_boxplot()+ -->
+<!--   geom_point(aes(fill = Mucin.Phenotype))+ -->
+<!--   stat_compare_means()+ -->
+<!--   stat_compare_means(method = "wilcox.test",comparisons = list(c("Control", "Gastric"), c("Control", "Intestinal"),c("Control","Mixed"),c("Control","Null"),c("Gastric","Intestinal"),c("Intestinal","Mixed"),c("Mixed","Null"),c("Gastric","Mixed"),c("Gastric","Null"),c("Intestinal","Null")))+ -->
+<!--   theme_classic2() -->
+
+<!-- chao_boxplot_normal <- ggplot(data = AlphaDiv_DF[AlphaDiv_DF$Tissue.Type != "adjacent",], aes(x= Mucin.Phenotype, y = chao1, color = Mucin.Phenotype))+ -->
+<!--   geom_boxplot()+ -->
+<!--   geom_point(aes(fill = Mucin.Phenotype))+ -->
+<!--   stat_compare_means()+ -->
+<!--   stat_compare_means(method = "wilcox.test",comparisons = list(c("Control", "Gastric"), c("Control", "Intestinal"),c("Control","Mixed"),c("Control","Null"),c("Gastric","Intestinal"),c("Intestinal","Mixed"),c("Mixed","Null"),c("Gastric","Mixed"),c("Gastric","Null"),c("Intestinal","Null")))+ -->
+<!--   theme_classic2() -->
+
+<!-- Simpson_boxplot_normal <- ggplot(data = AlphaDiv_DF[AlphaDiv_DF$Tissue.Type != "adjacent",], aes(x= Mucin.Phenotype, y = diversity_inverse_simpson, color = Mucin.Phenotype))+ -->
+<!--   geom_boxplot()+ -->
+<!--   geom_point(aes(fill = Mucin.Phenotype))+ -->
+<!--   stat_compare_means()+ -->
+<!--   stat_compare_means(method = "wilcox.test",comparisons = list(c("Control", "Gastric"), c("Control", "Intestinal"),c("Control","Mixed"),c("Control","Null"),c("Gastric","Intestinal"),c("Intestinal","Mixed"),c("Mixed","Null"),c("Gastric","Mixed"),c("Gastric","Null"),c("Intestinal","Null")))+ -->
+<!--   theme_classic2() -->
+
+<!-- ggarrange(observed_boxplot_normal,Shannon_boxplot_normal,chao_boxplot_normal,Simpson_boxplot_normal, common.legend = TRUE) -->
+<!-- ``` -->
+
+<!-- ```{r} -->
+<!-- AlphaDiv_DF$Mucin.Phenotype <- factor(x = AlphaDiv_DF$Mucin.Phenotype, levels = c("Control","Gastric","Intestinal","Mixed","Null"),labels =c("Control","Gastric","Intestinal","Mixed","Null")) -->
+<!-- AlphaDiv_DF[AlphaDiv_DF$Tissue.Type == "control", "Mucin.Phenotype"] <- "Control" -->
+<!-- AlphaDiv_DF <- drop_na(AlphaDiv_DF, Mucin.Phenotype) -->
+<!-- AlphaDiv_DF$Strat.Score_MUC13_T <- factor(x = AlphaDiv_DF$Strat.Score_MUC13_T, levels= c(-1,0,1), labels = c("Low","Mid","High")) -->
+
+<!-- observed_boxplot_normal <- ggplot(data = AlphaDiv_DF[AlphaDiv_DF$Tissue.Type == "tumor",], aes(x= Strat.Score_MUC13_T, y = observed, color = Strat.Score_MUC13_T))+ -->
+<!--   geom_boxplot()+ -->
+<!--   geom_point(aes(fill = Strat.Score_MUC13_T))+ -->
+<!--   stat_compare_means()+ -->
+<!--   stat_compare_means(method = "wilcox.test",comparisons = list(c("Low","Mid"),c("Mid","High"),c("Low","High")))+ -->
+<!--   theme_classic2() -->
+
+<!-- Shannon_boxplot_normal <- ggplot(data = AlphaDiv_DF[AlphaDiv_DF$Tissue.Type == "tumor",], aes(x= Strat.Score_MUC13_T, y = diversity_shannon, color = Strat.Score_MUC13_T))+ -->
+<!--   geom_boxplot()+ -->
+<!--   geom_point(aes(fill = Strat.Score_MUC13_T))+ -->
+<!--   stat_compare_means()+ -->
+<!--   stat_compare_means(method = "wilcox.test",comparisons = list(c("Low","Mid"),c("Mid","High"),c("Low","High")))+ -->
+<!--   theme_classic2() -->
+
+<!-- chao_boxplot_normal <- ggplot(data = AlphaDiv_DF[AlphaDiv_DF$Tissue.Type == "tumor",], aes(x= Strat.Score_MUC13_T, y = chao1, color = Strat.Score_MUC13_T))+ -->
+<!--   geom_boxplot()+ -->
+<!--   geom_point(aes(fill = Strat.Score_MUC13_T))+ -->
+<!--   stat_compare_means()+ -->
+<!--   stat_compare_means(method = "wilcox.test",comparisons = list(c("Low","Mid"),c("Mid","High"),c("Low","High")))+ -->
+<!--   theme_classic2() -->
+
+<!-- Simpson_boxplot_normal <- ggplot(data = AlphaDiv_DF[AlphaDiv_DF$Tissue.Type == "tumor",], aes(x= Strat.Score_MUC13_T, y = diversity_inverse_simpson, color = Strat.Score_MUC13_T))+ -->
+<!--   geom_boxplot()+ -->
+<!--   geom_point(aes(fill = Strat.Score_MUC13_T))+ -->
+<!--   stat_compare_means()+ -->
+<!--   stat_compare_means(method = "wilcox.test",comparisons = list(c("Low","Mid"),c("Mid","High"),c("Low","High")))+ -->
+<!--   theme_classic2() -->
+
+<!-- ggarrange(observed_boxplot_normal,Shannon_boxplot_normal,chao_boxplot_normal,Simpson_boxplot_normal, common.legend = TRUE) -->
+<!-- ``` -->
