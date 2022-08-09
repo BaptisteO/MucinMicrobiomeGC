@@ -1,5 +1,5 @@
 ---
-title: "7. differential_abundance_tree_annotation"
+title: "6. differential_abundance_tree_annotation"
 author: "Baptiste Oosterlinck"
 date: "3/3/2022"
 output: html_document
