@@ -1,0 +1,221 @@
+---
+title: "7. differential_abundance_tree_annotation"
+author: "Baptiste Oosterlinck"
+date: "3/3/2022"
+output: html_document
+---
+#1. doing a differential abundance analysis in fucntion of tissue type
+```{r}
+#For the aldex2 function the phyloseq otu-table should be transposed 
+#The Aldex2 algorithm requires the absolute abundances and not the relative ones
+agglom_BA2 <- t(agglom_BA2)
+
+#selecting the tumour samples and formatting for the ALDEx2 function
+agglom_BAT <- subset_samples(agglom_BA2, Tissue.Type == "tumor") %>%
+  t(.)
+
+Aldex_Tissue <- aldex(reads = otu_table(agglom_BA2), conditions = as.factor(agglom_BA2@sam_data$Tissue.Type),test = "kw",effect = FALSE,include.sample.summary = FALSE,verbose = TRUE,denom = "all")
+sig_AldexTissue <- Aldex_Tissue[Aldex_Tissue$kw.ep < 0.05, ]
+AldexTissue <-  subset(tax_table(agglom_BA2), rownames(tax_table(agglom_BA2)) %in% rownames(sig_AldexTissue)) %>%
+    merge_phyloseq(.,otu_table(agglom_BA2),sample_data(agglom_BA2))
+  
+AldexTissue_DF <- psmelt(AldexTissue)
+AldexTissue_DF$AbundanceLog2 <- log(x = AldexTissue_DF$Abundance, base = 2)
+#plotting the differential abundant genera per tissue type
+AldexTissue_boxplot <- ggplot(data = AldexTissue_DF, aes(x = Tissue.Type, y = AbundanceLog2, color = Tissue.Type))+
+  geom_boxplot()+
+  geom_point(position = position_jitter())+
+  stat_compare_means(method = "wilcox.test",comparisons = list(c("noninflammed","adjacent"),c("noninflammed","tumor"),c("adjacent","tumor")))+
+  stat_compare_means()+
+  facet_wrap(~Genus)+
+  theme_classic2()
+AldexTissue_boxplot
+```
+
+#2. Differential abundance analysis between mucin phenotypes (only for the tumour smaples)
+```{r}
+#performing ALDEx2 differential abundance analysis 
+Aldex_DA <- aldex(reads = t(otu_table(agglom_BAT)), conditions = as.factor(agglom_BAT@sam_data$Mucin.Phenotype),test = "kw",effect = FALSE,include.sample.summary = FALSE,verbose = TRUE,denom = "all")
+sig_AldexPheno <- Aldex_DA[Aldex_DA$kw.ep < 0.05, ]
+
+#getting the taxonomy of the differential abundant ASVs
+AldexPheno_ASV <- row.names(sig_AldexPheno)
+AldexPheno_Tax <- subset(tax_table(agglom_BAT), rownames(tax_table(agglom_BAT)) %in% AldexPheno_ASV)
+AldexPheno_Phylo <- merge_phyloseq(AldexPheno_Tax, otu_table(agglom_relBAT), sample_data(agglom_relBAT))
+
+AldexPheno_DF <- psmelt(AldexPheno_Phylo)%>%
+  drop_na(.,Mucin.Phenotype)
+AldexPheno_DF$AbundanceLog2 <- log(x = AldexPheno_DF$Abundance, base = 2)
+
+#plotting the differential abundant genera
+AldexPheno_boxplot <- ggplot(data = AldexPheno_DF, aes(x = Mucin.Phenotype, y = AbundanceLog2, color = Mucin.Phenotype))+
+  geom_boxplot()+
+  geom_point(position = position_jitter())+
+  stat_compare_means(method = "wilcox.test",comparisons = list(c("Gastric","Intestinal"),c("Intestinal","Mixed"),c("Mixed","Null"),c("Gastric","Mixed"),c("Gastric","Null"),c("Intestinal","Null")))+
+  stat_compare_means()+
+  facet_wrap(~Genus)+
+  theme_classic2()
+  
+AldexPheno_boxplot
+```
+
+#3. Differential abundance analysis between MUC13 expression levels
+```{r}
+AldexMUC13_DA <- aldex(reads = t(otu_table(agglom_BAT)), conditions = as.factor(agglom_BAT@sam_data$Strat.Score_MUC13_T),test = "kw",effect = FALSE,include.sample.summary = FALSE,verbose = TRUE,denom = "all")
+sig_AldexMUC13 <- AldexMUC13_DA[AldexMUC13_DA$kw.ep < 0.05, ]
+#getting the taxonomy of the differentially abundant ASVs
+AldexMUC13_ASV <- row.names(sig_AldexMUC13)
+AldexMUC13_Tax <- subset(tax_table(agglom_BAT), rownames(tax_table(agglom_BAT)) %in% AldexMUC13_ASV)
+AldexMUC13_Phylo <- merge_phyloseq(AldexMUC13_Tax, otu_table(agglom_relBAT), sample_data(agglom_relBAT))
+
+AldexMUC13_DF <- psmelt(AldexMUC13_Phylo)%>%
+  drop_na(.,Strat.Score_MUC13_T)
+AldexMUC13_DF$AbundanceLog2 <- log(x = AldexMUC13_DF$Abundance, base = 2)
+AldexMUC13_DF$Strat.Score_MUC13_T <- factor(AldexMUC13_DF$Strat.Score_MUC13_T, levels = c(-1,0,1), labels = c("Low","Mid","High"))
+
+#plotting the differential abundant genera
+AldexMUC13_boxplot <- ggplot(data = AldexMUC13_DF, aes(x = Strat.Score_MUC13_T, y = AbundanceLog2, color = Strat.Score_MUC13_T))+
+  geom_boxplot()+
+  geom_point(position = position_jitter())+
+  stat_compare_means(method = "wilcox.test",comparisons = list(c("Low","Mid"),c("Low","High"),c("Mid","High")))+
+  stat_compare_means()+
+  facet_wrap(~Genus, scales = "free_y")+
+  theme_classic2()
+  
+AldexMUC13_boxplot
+
+distinct(AldexMUC13_DF,OTU,.keep_all = TRUE)[,c("OTU","Genus")]
+```
+
+#4. Differential abundance analysis between MUC2 expression levels
+```{r}
+AldexMUC2_DA <- aldex(reads = t(otu_table(agglom_BAT)), conditions = as.factor(agglom_BAT@sam_data$Strat.Score_MUC2_T),test = "kw",effect = FALSE,include.sample.summary = FALSE,verbose = TRUE,denom = "all")
+sig_AldexMUC2 <- AldexMUC2_DA[AldexMUC2_DA$kw.ep < 0.05, ]
+#getting the taxonomy of the differentially abundant ASVs
+AldexMUC2_ASV <- row.names(sig_AldexMUC2)
+AldexMUC2_Tax <- subset(tax_table(agglom_BAT), rownames(tax_table(agglom_BAT)) %in% AldexMUC2_ASV)
+AldexMUC2_Phylo <- merge_phyloseq(AldexMUC2_Tax, otu_table(agglom_relBAT), sample_data(agglom_relBAT))
+
+AldexMUC2_DF <- psmelt(AldexMUC2_Phylo)%>%
+  drop_na(.,Strat.Score_MUC2_T)
+AldexMUC2_DF$AbundanceLog2 <- log(x = AldexMUC2_DF$Abundance, base = 2)
+AldexMUC2_DF$Strat.Score_MUC2_T <- factor(AldexMUC2_DF$Strat.Score_MUC2_T, levels = c(-1,0,1), labels = c("Low","Mid","High"))
+#plotting the differential abundant genera
+AldexMUC2_boxplot <- ggplot(data = AldexMUC2_DF, aes(x = Strat.Score_MUC2_T, y = AbundanceLog2, color = Strat.Score_MUC2_T))+
+  geom_boxplot()+
+  geom_point(position=position_jitter())+
+  stat_compare_means(method = "wilcox.test",comparisons = list(c("Low","Mid"),c("Low","High"),c("Mid","High")))+
+  stat_compare_means()+
+  facet_wrap(~Genus, scales = "free_y")+
+  theme_classic2()
+  
+AldexMUC2_boxplot
+
+distinct(AldexMUC2_DF,OTU,.keep_all = TRUE)[,c("OTU","Genus")]
+```
+
+#5. Differential abundance analysis between MUC4 expression levels
+```{r}
+AldexMUC4_DA <- aldex(reads = t(otu_table(agglom_BAT)), conditions = as.factor(agglom_BAT@sam_data$Strat.Score_MUC4_T),test = "kw",effect = FALSE,include.sample.summary = FALSE,verbose = TRUE,denom = "all")
+sig_AldexMUC4 <- AldexMUC4_DA[AldexMUC4_DA$kw.ep < 0.05, ]
+#getting the taxonomy of the differentially abundant ASVs
+AldexMUC4_ASV <- row.names(sig_AldexMUC4)
+AldexMUC4_Tax <- subset(tax_table(agglom_BAT), rownames(tax_table(agglom_BAT)) %in% AldexMUC4_ASV)
+AldexMUC4_Phylo <- merge_phyloseq(AldexMUC4_Tax, otu_table(agglom_relBAT), sample_data(agglom_relBAT))
+
+AldexMUC4_DF <- psmelt(AldexMUC4_Phylo)%>%
+  drop_na(.,Strat.Score_MUC4_T)
+AldexMUC4_DF$AbundanceLog2 <- log(x = AldexMUC4_DF$Abundance, base = 2)
+AldexMUC4_DF$Strat.Score_MUC4_T <- factor(AldexMUC4_DF$Strat.Score_MUC4_T, levels = c(-1,0,1), labels = c("Low","Mid","High"))
+#plotting the differential abundant genera
+AldexMUC4_boxplot <- ggplot(data = AldexMUC4_DF, aes(x = Strat.Score_MUC4_T, y = AbundanceLog2, color = Strat.Score_MUC4_T))+
+  geom_boxplot()+
+  geom_point(position=position_jitter())+
+  stat_compare_means(method = "wilcox.test",comparisons = list(c("Low","Mid"),c("Low","High"),c("Mid","High")))+
+  stat_compare_means()+
+  facet_wrap(~Genus,scales = "free_y")+
+  theme_classic2()
+AldexMUC4_boxplot
+
+distinct(AldexMUC4_DF,OTU,.keep_all = TRUE)[,c("OTU","Genus")]
+```
+
+#6. Differential abundance analysis between MUC5AC expression levels
+```{r}
+AldexMUC5AC_DA <- aldex(reads = t(otu_table(agglom_BAT)), conditions = as.factor(agglom_BAT@sam_data$Strat.Score_MUC5AC_T),test = "kw",effect = FALSE,include.sample.summary = FALSE,verbose = TRUE,denom = "all")
+sig_AldexMUC5AC <- AldexMUC5AC_DA[AldexMUC5AC_DA$kw.ep < 0.05, ]
+#getting the taxonomy of the differentially abundant ASVs
+AldexMUC5AC_ASV <- row.names(sig_AldexMUC5AC)
+AldexMUC5AC_Tax <- subset(tax_table(agglom_BAT), rownames(tax_table(agglom_BAT)) %in% AldexMUC5AC_ASV)
+AldexMUC5AC_Phylo <- merge_phyloseq(AldexMUC5AC_Tax, otu_table(agglom_relBAT), sample_data(agglom_relBAT))
+
+AldexMUC5AC_DF <- psmelt(AldexMUC5AC_Phylo)%>%
+  drop_na(.,Strat.Score_MUC5AC_T)
+AldexMUC5AC_DF$AbundanceLog2 <- log(x = AldexMUC5AC_DF$Abundance, base = 2)
+AldexMUC5AC_DF$Strat.Score_MUC5AC_T <- factor(AldexMUC5AC_DF$Strat.Score_MUC5AC_T, levels = c(-1,1), labels = c("Low","High"))
+
+AldexMUC5AC_DF <- drop_na(AldexMUC5AC_DF, Strat.Score_MUC5AC_T)
+#plotting the differential abundant genera
+AldexMUC5AC_boxplot <- ggplot(data = AldexMUC5AC_DF, aes(x = Strat.Score_MUC5AC_T, y = AbundanceLog2, color = Strat.Score_MUC5AC_T))+
+  geom_boxplot()+
+  geom_point(position = position_jitter())+
+  stat_compare_means(method = "wilcox.test",comparisons = list(c("Low","High")))+
+  facet_wrap(~Genus,scales="free_y")+
+  theme_classic2()
+  
+AldexMUC5AC_boxplot
+
+distinct(AldexMUC5AC_DF,OTU,.keep_all = TRUE)[,c("OTU","Genus")]
+```
+
+#7. Differential abundance analysis between MUC6 expression levels
+```{r}
+AldexMUC6_DA <- aldex(reads = t(otu_table(agglom_BAT)), conditions = as.factor(agglom_BAT@sam_data$Strat.Score_MUC6_T),test = "kw",effect = FALSE,include.sample.summary = FALSE,verbose = TRUE,denom = "all")
+sig_AldexMUC6 <- AldexMUC6_DA[AldexMUC6_DA$kw.ep < 0.05, ]
+#getting the taxonomy of the differentially abundant ASVs
+AldexMUC6_ASV <- row.names(sig_AldexMUC6)
+AldexMUC6_Tax <- subset(tax_table(agglom_BAT), rownames(tax_table(agglom_BAT)) %in% AldexMUC6_ASV)
+AldexMUC6_Phylo <- merge_phyloseq(AldexMUC6_Tax, otu_table(agglom_relBAT), sample_data(agglom_relBAT))
+
+AldexMUC6_DF <- psmelt(AldexMUC6_Phylo)%>%
+  drop_na(.,Strat.Score_MUC6_T)
+AldexMUC6_DF$AbundanceLog2 <- log(x = AldexMUC6_DF$Abundance, base = 2)
+AldexMUC6_DF$Strat.Score_MUC6_T <- factor(AldexMUC6_DF$Strat.Score_MUC6_T, levels = c(-1,1), labels = c("Low","High"))
+
+AldexMUC6_DF <- drop_na(AldexMUC6_DF, Strat.Score_MUC6_T)
+#plotting the differential abundant genera
+AldexMUC6_boxplot <- ggplot(data = AldexMUC6_DF, aes(x = Strat.Score_MUC6_T, y = AbundanceLog2, color = Strat.Score_MUC6_T))+
+  geom_boxplot()+
+  geom_point(position = position_jitter())+
+  stat_compare_means(method = "wilcox.test",comparisons = list(c("Low","High")))+
+  facet_wrap(~Genus,scales = "free_y")+
+  theme_classic2()
+  
+AldexMUC6_boxplot
+distinct(AldexMUC6_DF,OTU,.keep_all = TRUE)[,c("OTU","Genus")]
+```
+
+#8. Differential abundance analysis between MUC1 expression levels
+```{r}
+AldexMUC1_DA <- aldex(reads = t(otu_table(agglom_BAT)), conditions = as.factor(agglom_BAT@sam_data$Strat.Score_MUC1_T),test = "kw",effect = FALSE,include.sample.summary = FALSE,verbose = TRUE,denom = "all")
+sig_AldexMUC1 <- AldexMUC1_DA[AldexMUC1_DA$kw.ep < 0.05, ]
+#getting the taxonomy of the differentially abundant ASVs
+AldexMUC1_ASV <- row.names(sig_AldexMUC1)
+AldexMUC1_Tax <- subset(tax_table(agglom_BAT), rownames(tax_table(agglom_BAT)) %in% AldexMUC1_ASV)
+AldexMUC1_Phylo <- merge_phyloseq(AldexMUC1_Tax, otu_table(agglom_relBAT), sample_data(agglom_relBAT))
+
+AldexMUC1_DF <- psmelt(AldexMUC1_Phylo)%>%
+  drop_na(.,Strat.Score_MUC1_T)
+AldexMUC1_DF$AbundanceLog2 <- log(x = AldexMUC1_DF$Abundance, base = 2)
+AldexMUC1_DF$Strat.Score_MUC1_T <- factor(AldexMUC1_DF$Strat.Score_MUC1_T, levels = c(-1,0,1), labels = c("Low","Mid","High"))
+#plotting the differential abundant genera
+AldexMUC1_boxplot <- ggplot(data = AldexMUC1_DF, aes(x = Strat.Score_MUC1_T, y = AbundanceLog2, color = Strat.Score_MUC1_T))+
+  geom_boxplot()+
+  stat_compare_means(method = "wilcox.test",comparisons = list(c("Low","Mid"),c("Low","High"),c("Mid","High")))+
+  stat_compare_means()+
+  facet_wrap(~Genus)+
+  theme_classic2()
+  
+AldexMUC1_boxplot
+```
+

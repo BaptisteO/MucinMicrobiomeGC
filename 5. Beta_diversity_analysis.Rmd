@@ -1,0 +1,62 @@
+---
+title: "6. Beta_diversity_analysis"
+author: "Baptiste Oosterlinck"
+date: "2-3-2022"
+output: html_document
+---
+
+#1. Calcultating the distances and plotting a PCoA plot
+```{r}
+#recoding the labels of the levels of the metadata
+MetaData_Ill <- sample_data(agglom_relAb2)
+MetaData_Ill$Tissue.Type <- factor(MetaData_Ill$Tissue.Type, levels = c("noninflammed","adjacent","tumor"),labels = c("Control","Adjacent","Tumor"), ordered = TRUE)
+levels(MetaData_Ill$Mucin.Phenotype) <- c(levels(MetaData_Ill$Mucin.Phenotype),"Control")
+MetaData_Ill[MetaData_Ill$Tissue.Type == "Control","Mucin.Phenotype"] <- "Control" 
+
+agglom_relAb_PCOA <- agglom_relAb2
+sample_data(agglom_relAb_PCOA) <- MetaData_Ill
+
+PCoA_Bray <- ordinate(agglom_relAb_PCOA, method = "PCoA", distance = "bray")
+
+PCoA_Bray_plot <- plot_ordination(agglom_relAb_PCOA, PCoA_Bray , type = "samples", axes = 1:2, color = "Mucin.Phenotype")+
+  facet_wrap(~Tissue.Type)+
+  stat_ellipse(level = 0.95)+
+  ggtitle("PCoA of Bray-Curtis")+
+  scale_fill_viridis(option = "turbo",discrete = TRUE)+
+  theme_classic2()
+PCoA_Bray_plot
+
+PCoA_UnifracW <- ordinate(agglom_relAb_PCOA, method = "PCoA", distance = "unifrac",weighted = TRUE)
+
+PCoA_UnifracW_plot <- plot_ordination(agglom_relAb_PCOA, PCoA_UnifracW , type = "samples", axes = 1:2, color = "Mucin.Phenotype")+
+  ggtitle("PCoA of weighted unifrac")+
+  stat_ellipse(level = 0.95)+
+  scale_fill_viridis(option = "turbo",discrete = TRUE)+
+    facet_wrap(~Tissue.Type)+
+  theme_classic2()
+PCoA_UnifracW_plot
+
+ggarrange(PCoA_Bray_plot,PCoA_UnifracW_plot,ncol = 2, common.legend = TRUE,legend = "bottom")
+```
+
+#2. anosim analysis
+```{r}
+anosim_df <- as.data.frame(agglom_relAb2@otu_table) %>%
+  mutate(.,Illumina.ID = rownames(.)) %>%
+  merge(.,MetaData[,c("Illumina.ID","Tissue.Type","Mucin.Phenotype")],by = "Illumina.ID")
+
+anosim(anosim_df[,2:631],grouping = anosim_df$Tissue.Type,distance = "bray",permutations=9999)
+
+anosim_df_tumor <- subset(anosim_df, anosim_df$Tissue.Type == "tumor") %>%
+  drop_na(., Mucin.Phenotype)
+
+dada_pheno <- subset_samples(agglom_relAb2, Tissue.Type == "tumor") %>%
+  subset_samples(.,is.na(Mucin.Phenotype) == FALSE)
+
+phyloseq::distance(dada_pheno, method = "wunifrac") %>%
+  anosim(.,grouping = get_variable(dada_pheno,"Mucin.Phenotype"))
+
+anosim(anosim_df_tumor[,2:631],grouping = anosim_df_tumor$Mucin.Phenotype,distance = "bray",permutations=9999)
+anosim(anosim_df_tumor[,2:631],grouping = anosim_df_tumor$Mucin.Phenotype,distance = "unifrac",permutations=9999)
+```
+

@@ -1,0 +1,220 @@
+---
+title: "10. evaluation oral/intestinal"
+author: "Baptiste Oosterlinck"
+date: "25-5-2022"
+output: html_document
+---
+
+#Introduction to obtaining the Oral bacteria:
+The ASV reference sequences were BLASTed (BLASTN) against the sequences of the HOM database.
+The top hits were retrieved and filtered for:
+  1. >= 99% identity
+  2. >= 99% coverage
+The aim is to retain the results with a reliable species level taxonomy to infer their preferred habitat from the HOM database
+
+#1.Oral vs Non-Oral 
+##1.1 loading the BLASTN data
+```{r}
+eHOM <- read_xlsx(path = "eHOMD BLASTN/HOMD_blast2022-05-24_1653434548_TopHits.xlsx",col_names = TRUE)
+eHOM$coverage <- as.numeric(eHOM$coverage)
+```
+
+##1.2 filtering the data for identity and alginment length
+The bacterial taxa with an unassigned prefered habitat were also filtered as they won't serve our analysis
+```{r}
+eHOM_F <- subset( eHOM, Identity >= 99) %>%
+  subset(., coverage >= 99 ) %>%
+  subset(., PreferredHabitat != "Unassigned")
+
+print(paste("Portion of ASV's from the HOM database retained for further analysis: ", nrow(eHOM_F)/nrow(eHOM)))
+```
+Only 9.2% of the ASV's had a high enough identity and coverage for subsequent analysis combined with an assigned preferred habitat
+
+##1.3 validating with the DECIPHER assigned taxonomy (from script 1. dada2_preprocessing)
+```{r}
+Dada_ReleHOM <- subset_taxa(agglom_relAb2, rownames(agglom_relAb2@tax_table) %in% eHOM_F$ASV)
+
+Compare_DF <- Dada_ReleHOM@tax_table %>%
+  as.data.frame(.) %>%
+  rownames_to_column(.,var = "ASV") %>%
+  full_join(.,eHOM_F, by = "ASV") %>%
+  select(.,c(ASV:Genus,BacterialTaxonomy,PreferredHabitat,Identity,coverage,QueryLength,AlignmentLength,Status))
+
+writexl::write_xlsx(Compare_DF,path = "eHOMD BLASTN/Validation_HOM_Decipher_AssignedOnly.xlsx")
+```
+
+##1.4 Formatting a dataframe for plotting
+```{r}
+table(Compare_DF$PreferredHabitat)
+Compare_DF$PreferredHabitat <- factor(Compare_DF$PreferredHabitat,levels = c("Nasal","Nasal/Oral","Oral","Skin","Vaginal"),labels = c("Oral","Oral","Oral","nonOral","nonOral"))
+
+#getting the oral taxa
+ASV_oral <- subset(Compare_DF, PreferredHabitat == "Oral")[,"ASV"]
+dada_oral <- subset_taxa(agglom_relAb2, rownames(agglom_relAb2@tax_table) %in% ASV_oral)
+#getting the nonOral taxa
+dada_nonOral <- subset_taxa(agglom_relAb2, !rownames(agglom_relAb2@tax_table) %in% ASV_oral)
+
+#getting the metadata needed for further analysis
+metaHom <- agglom_relAb2@sam_data %>%
+  data.frame %>%
+  select(c(Illumina.ID,Tissue.Type,Tumor.Location,Lauren.Classification,Gender,Stage,Strat.Score_MUC1_N:Strat.Score_MUC6_T,Mucin.Phenotype))
+
+#pooling the relative abundance of the taxa groups together and adding it to the metadata
+metaHom <- rowSums(dada_oral@otu_table) %>%
+  data.frame(relAb_Oral = .) %>%
+  rownames_to_column(.,var = "Illumina.ID") %>%
+  full_join(.,metaHom,by = "Illumina.ID")
+
+metaHom <- rowSums(dada_nonOral@otu_table) %>%
+  data.frame(relAb_nonOral = .) %>%
+  rownames_to_column(.,var = "Illumina.ID") %>%
+  full_join(.,metaHom,by = "Illumina.ID")
+```
+
+##1.5 plotting the oral vs non-oral relative abundances per groups
+```{r}
+#according to control - adjacent - tumour and per phenotype
+metaHom_pheno <- subset(metaHom,Tissue.Type == "tumor") %>%
+  drop_na(.,Mucin.Phenotype)
+
+metaHom_extended <- metaHom %>%
+  mutate(Mucin.Phenotype = .$Tissue.Type)%>%
+  rbind(.,metaHom_pheno)%>%
+  mutate(relAb_Oral_Log2= log(relAb_Oral,base = 2))
+
+OralAb_boxplot <- ggplot(data = metaHom_extended, aes(x = Mucin.Phenotype,y = relAb_Oral_Log2,color = Mucin.Phenotype))+
+  geom_boxplot()+
+  ylim(-10,10)+
+  geom_point(position = position_jitter(seed = 1995,width = 0.15))+
+  stat_compare_means(aes(label = ..p.signif..),hide.ns = TRUE,method = "wilcox.test",comparisons = list(c("noninflammed","adjacent"),c("adjacent","tumor"),c("noninflammed","tumor"),c("noninflammed","Gastric"),c("noninflammed","Intestinal"),c("noninflammed","Mixed"),c("noninflammed","Null"),c("Gastric","Intestinal"),c("Intestinal","Mixed"),c("Mixed","Null"),c("Gastric","Mixed"),c("Gastric","Null"),c("Intestinal","Null")))+
+  theme_classic2()
+OralAb_boxplot
+
+ggplot(data = metaHom_pheno, aes(x =Lauren.Classification,y = relAb_Oral))+
+  geom_boxplot()+
+  geom_point()+
+  stat_compare_means(method = "wilcox.test",comparisons = list(c("Low","Mid"),c("Low","High"),c("Mid","High")))
+
+compare_means(relAb_nonOral ~ Mucin.Phenotype, metaHom_pheno,method = "wilcox.test")
+
+MetaHom_new <- metaHom %>%
+  rbind(.,metaHom_pheno)
+
+ggplot(data = MetaHom_new, aes(x=Tissue.Type,y= log(relAb_Oral,base = 2)))+
+  geom_boxplot()+
+  geom_point(position = position_jitter(seed = 1995,width = 0.15))+
+  stat_compare_means(hide.ns = FALSE,method = "wilcox.test",comparisons = list(c("noninflammed","adjacent"),c("adjacent","tumor"),c("noninflammed","tumor"),c("noninflammed","Gastric"),c("noninflammed","Intestinal"),c("noninflammed","Mixed"),c("noninflammed","Null"),c("Gastric","Intestinal"),c("Intestinal","Mixed"),c("Mixed","Null"),c("Gastric","Mixed"),c("Gastric","Null"),c("Intestinal","Null")))
+```
+
+#introduction to obtaining the intestinal microbiome
+From github (https://github.com/openresearchlabs/HITdb) the database fasta file was downloaded and adjusted using a python script to a achieve a formatting that is compatible with BLASTN. The mothur formated taxonomy file was adjusted for easy import in R in the same script.
+
+#2. adjusting the fasta and taxonomy files with python
+
+```{python}
+from Bio import SeqIO
+import pandas as pd
+ 
+tax_tbl = pd.read_csv("HITdb_taxonomy_mothur.txt",delimiter="\t")
+
+tax_tbl.columns =['ID','Taxonomy']
+#splitting the dataframe by delimiter into new collumns
+tax_tbl[['Phylum','Class','Order','Family','Genus','Species','empty']] = tax_tbl['Taxonomy'].str.split(';',expand=True)
+#creating an empty dataframe:
+ID_list = []
+IDnew_list = []
+
+i = 1
+with open("HITdb_sequences.fna") as original, open("HITdb_sequences_corrected.fna",'w') as corrected:
+    fasta_seq = SeqIO.parse(original,"fasta")
+    for fasta in fasta_seq:
+        ID = fasta.id
+        IDnew = 'seq_' + str(i)
+        i = i+1
+        
+        ID_list.append(ID)
+        IDnew_list.append(IDnew)
+        
+        fasta.id = IDnew
+        fasta.name = ''
+        fasta.description=''
+    
+        SeqIO.write(fasta, corrected, 'fasta')
+        
+ID_tbl = pd.DataFrame({'ID': ID_list, 'ID_new':IDnew_list})
+
+Tax_fin = pd.merge(ID_tbl,tax_tbl,on = 'ID',how='left')
+
+Tax_fin.to_excel("HITdb_taxonomy_R.xlsx")
+```
+
+#3. intestinal microbiome analysis
+##3.1 reading in the BLAST results from the HIT database and the taxonomy
+```{r}
+HITdb <- read_xlsx(path = "HITdb_master/HITdb_v1.00/HITdb_BLASTn_results.xlsx",col_names = TRUE)
+HITdb_tax <- read_xlsx(path = "HITdb_master/HITdb_v1.00/HITdb_taxonomy_R.xlsx")
+
+HITdb <- left_join(HITdb,HITdb_tax,by = "ID")
+
+Overlap_OralInt <- subset(HITdb, ASV %in% ASV_oral)
+
+Dada_RelHITdb <- subset_taxa(agglom_relAb2, rownames(agglom_relAb2@tax_table) %in% HITdb$ASV)
+
+Compare_DF <- Dada_RelHITdb@tax_table %>%
+  as.data.frame(.) %>%
+  rownames_to_column(.,var = "ASV") %>%
+  full_join(.,HITdb, by = "ASV")
+
+writexl::write_xlsx(Compare_DF,path = "HITdb_master/HITdb_v1.00/BLASTn/Validation_HIT_Decipher_AssignedOnly.xlsx")
+```
+
+##3.2 filtering of the HITdb due to inconsistent classification and overlap with the oral 
+
+```{r}
+filter_ASV <- c("ASV156","ASV470","ASV2016","ASV3456","ASV3729","ASV3891","ASV4096","ASV4547","ASV5201","ASV5254","ASV5289","ASV5756","ASV6316","ASV6614","ASV6660","ASV6714","ASV7649","ASV8124","ASV8219","ASV9249","ASV12209","ASV12702","ASV12754","ASV13087","ASV14864","ASV15235","ASV18188","ASV18819","ASV19845","ASV21754","ASV28750",ASV_oral) %>% unique(.)
+
+dada_Intestinal <- subset_taxa(Dada_RelHITdb, !rownames(Dada_RelHITdb@tax_table) %in% filter_ASV)
+
+#getting the metadata needed for further analysis
+metaHIT <- agglom_relAb2@sam_data %>%
+  data.frame %>%
+  select(c(Illumina.ID,Tissue.Type,Tumor.Location,Lauren.Classification,Gender,Stage,Strat.Score_MUC1_N:Strat.Score_MUC6_T,Mucin.Phenotype))
+
+#pooling the relative abundance of the taxa groups together and adding it to the metadata
+metaHIT <- rowSums(dada_Intestinal@otu_table) %>%
+  data.frame(relAb_Intestinal = .) %>%
+  rownames_to_column(.,var = "Illumina.ID") %>%
+  full_join(.,metaHIT,by = "Illumina.ID")
+
+#according to control - adjacent - tumour and per phenotype
+metaHIT_pheno <- subset(metaHIT,Tissue.Type == "tumor") %>%
+  drop_na(.,Mucin.Phenotype) %>%
+  mutate(.,Tissue.Type = Mucin.Phenotype)
+
+metaHIT_pheno$Strat.Score_MUC13_T <- factor(metaHIT_pheno$Strat.Score_MUC13_T, levels = c(-1,0,1),labels = c("Low","Mid","High"))
+
+ggplot(data = metaHIT_pheno, aes(x = Mucin.Phenotype,y = relAb_Intestinal))+
+  geom_boxplot()+
+  geom_point()+
+  stat_compare_means(method = "wilcox.test",comparisons = list(c("Gastric","Intestinal"),c("Intestinal","Mixed"),c("Mixed","Null"),c("Gastric","Mixed"),c("Gastric","Null"),c("Intestinal","Null")))
+```
+
+#4. comparing the relative abundance of oral and intestinal bacteria per mucin phenotype
+```{r}
+#adding the oral relative abundance
+meta_OrIn <- full_join(metaHIT,metaHom[,c("Illumina.ID","relAb_Oral")],by = "Illumina.ID")
+
+meta_OrIn_long <- gather(meta_OrIn,key = "Habitat",value = "relAb", c(2,21))
+meta_OrIn_long$Habitat <- factor(meta_OrIn_long$Habitat, levels = c("relAb_Oral","relAb_Intestinal"),labels = c("Oral","Intestinal"))
+
+ggplot(data = meta_OrIn_long, aes(x = Tissue.Type,y = relAb, color = Habitat))+
+  geom_boxplot()+
+  geom_point(position = position_jitterdodge(dodge.width = 0.75))
+
+#doing the analysis for the mucin phenotypes
+meta_OrIn_long %>%
+  subset(., Tissue.Type == "tumor")%>%
+  ggplot(., aes(x= Mucin.Phenotype, y = relAb, color = Habitat)) +
+    geom_boxplot()
+```
+

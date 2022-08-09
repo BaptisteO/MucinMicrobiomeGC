@@ -1,0 +1,39 @@
+---
+title: "0. Initializing_workenvironment"
+author: "Baptiste Oosterlinck"
+date: "12/13/2021"
+output: html_document
+---
+
+Setting seed for reproducibility across runs of the script
+
+```{r setup, include=FALSE}
+set.seed(1995)
+```
+
+Loading the required packages
+
+```{r setup, include=FALSE}
+devtools::install_github('https://github.com/paulvanderlaken/ppsr')
+
+packages = c("dada2", "phyloseq", "Biostrings","gridExtra","ggplot2","DECIPHER","phangorn","readxl","tidyverse","ggpubr","vegan","microbiome","tidyr","ggplot2","ggpubr","ALDEx2","dplyr","biomformat","viridis","survminer","survival","data.table","cooccur","visNetwork","tidygraph","ggraph","magrittr","ppsr","boot")
+
+# Packages loading
+invisible(lapply(packages, library, character.only = TRUE))
+rc <- dada2:::rc
+
+rm(packages)
+```
+
+Setting the working directories for the analysis
+  - the reference database can be found at: http://www2.decipher.codes/Downloads.html
+  - the metadata file was uploaded as supplementary file of the article (DOI: )
+
+```{r setup, include=FALSE}
+wd_dir <- #"set working directory"
+refDB_path <- "./RefDB/SILVA_SSU_r138_2019.RData" #set path to DECIPHER formated reference database
+fastq_dir <- "./Fastq" #set path to the directory with the fastq files
+
+#Clinical data file
+meta_file <- "./MetaData.xlsx" #set path to metadata file
+```

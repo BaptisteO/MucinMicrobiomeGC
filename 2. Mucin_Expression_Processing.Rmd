@@ -1,0 +1,614 @@
+---
+title: "2. Mucin_Expression_Processing"
+author: "Baptiste Oosterlinck"
+date: "21-2-2022"
+output: html_document
+---
+
+#preparing the data frame
+##1. Loading the metadata data into a dataframe
+  - setting the dates into the correct format.
+  - If you see numbers in stead of the correct dates go into excel:
+    Data -> Text to Columns -> unselect all delimiters -> set column format to text
+    
+```{r}
+ClinGC <- read_excel( path = meta_file, sheet = 1)
+MucinGC <- read_excel( path = meta_file, sheet = 2)
+
+#transform DOD, LFU, SD to date format in R
+ClinGC$Sampling.Date <- as.Date(ClinGC$Sampling.Date , format = "%d/%m/%Y")
+ClinGC$Date.of.Death <- as.Date(ClinGC$Date.of.Death , format = "%d/%m/%Y")
+ClinGC$Last.Follow.Up <- as.Date(ClinGC$Last.Follow.Up , format = "%d/%m/%Y")
+
+#mutate selected columns to factors
+factor_cols <- c("Sample.Origin", "Tissue.Type", "Tumor.Location", "Lauren.Classification", "Survival", "Gender")
+ClinGC[factor_cols] <- lapply(ClinGC[factor_cols], factor)
+
+rm(factor_cols)
+```
+
+##2. Calculating the number of observational days using the sampling date - date of death or last follow up
+```{r}
+#calculating the number of observation days
+ClinGC$Observation.Days <- rep(NA, nrow(ClinGC))
+
+for (i in 1:nrow(ClinGC)) {
+    if (is.na(ClinGC$Sampling.Date[i])) {
+
+    } else if (!is.na(ClinGC$Date.of.Death[i])) {
+        ClinGC$Observation.Days[i] <- ClinGC$Date.of.Death[i] - ClinGC$Sampling.Date[i]
+    } else if (is.na(ClinGC$Date.of.Death[i]) & !is.na(ClinGC$Last.Follow.Up[i])) {
+        ClinGC$Observation.Days[i] <- ClinGC$Last.Follow.Up[i] - ClinGC$Sampling.Date[i]
+    }
+}
+
+rm(i)
+```
+
+##3. Mergin the datasets with the mucin expression data and the clinical data
+```{r}
+#merge both datasets
+MetaData <- full_join(ClinGC,MucinGC, by = "Sample.ID") %>%
+  as.data.frame(.)
+
+rm(ClinGC,MucinGC)
+```
+
+##4. Transforming the stages of the TNM-staging from code to the real stage and determining the final cancer stage
+```{r}
+#binning of T1,T2 and T4 subclasses
+T_stage <- c()
+for (Stage in MetaData$T) {
+    if (is.na(Stage)) {
+        T_stage <- c(T_stage, NA)
+    } else if (Stage == 1) {
+        T_stage <- c(T_stage, "TX")
+    } else if (Stage == 2) {
+        T_stage <- c(T_stage, "T0")
+    } else if (Stage == 3) {
+        T_stage <- c(T_stage, "Tis")
+    } else if (Stage == 4 | Stage == 5 | Stage == 6) {
+        T_stage <- c(T_stage, "T1")
+    } else if (Stage == 7 | Stage == 8 | Stage == 9) {
+        T_stage <- c(T_stage, "T2")
+    } else if (Stage == 10) {
+        T_stage <- c(T_stage, "T3")
+    } else if (Stage == 11 | Stage == 12) {
+        T_stage <- c(T_stage, "T4a")
+    } else if (Stage == 13) {
+        T_stage <- c(T_stage, "T4b")
+    }
+}
+
+N_stage <- c()
+for (Stage in MetaData$N) {
+    if (is.na(Stage)) {
+        N_stage <- c(N_stage, NA)
+    } else if (Stage == 1) {
+        N_stage <- c(N_stage, "NX")
+    } else if (Stage == 2) {
+        N_stage <- c(N_stage, "N0")
+    } else if (Stage == 3) {
+        N_stage <- c(N_stage, "N1")
+    } else if (Stage == 4 | Stage == 5 | Stage == 6) {
+        N_stage <- c(N_stage, "N2")
+    } else if (Stage == 7 | Stage == 8) {
+        N_stage <- c(N_stage, "N3a")
+    } else if (Stage == 9) {
+        N_stage <- c(N_stage, "N3b")
+    }
+}
+
+M_stage <- c()
+for (Stage in MetaData$M) {
+    if (is.na(Stage)) {
+        M_stage <- c(M_stage, NA)
+    } else if (Stage == 1) {
+        M_stage <- c(M_stage, "MX")
+    } else if (Stage == 2) {
+        M_stage <- c(M_stage, "M1")
+    } else if (Stage == 3) {
+        M_stage <- c(M_stage, "M2")
+    }
+}
+
+#adding the different stages to the metadata dataframe
+MetaData$T <- T_stage
+MetaData$N <- N_stage
+MetaData$M <- M_stage
+rm(T_stage, N_stage, M_stage,Stage)
+
+#Determining tumor stage based upon TNM classification
+CancerStage <- data.frame(Stage = rep(Inf, nrow(MetaData)))
+
+StageMatrix <- t(matrix(c("1A", "1B", "2A", "2B", "3B", "2A",
+                          "1B", "2A", "2B", "3A", "3B", "2B",
+                          "2A", "2B", "3A", "3B", "3C", "3A",
+                          "2B", "3A", "3A", "3B", "3C", "3A",
+                          "3A", "3B", "3B", "3C", "3C", "3B",
+                          "2A", "2B", "3A", "3B", "3C", "3A"
+                          ), nrow = 6))
+
+colnames(StageMatrix) <- c("N0", "N1", "N2", "N3a", "N3b", "NX")
+rownames(StageMatrix) <- c("T1", "T2", "T3", "T4a", "T4b", "TX")
+StageMatrix <- as.data.frame(StageMatrix)
+
+for (i in 1:nrow(MetaData)) {
+    if (!is.na(MetaData$M[i]) & MetaData$M[i] == "M1") {
+        CancerStage[i, 1] <- 4
+    } else if (is.na(MetaData$T[i]) | is.na(MetaData$N[i]) | is.na(MetaData$M[i])) {
+        CancerStage[i, 1] <- NA
+    } else {
+        CancerStage[i, 1] <- StageMatrix[MetaData$T[i], MetaData$N[i]]
+    }
+}
+
+MetaData$Stage <- as.factor(CancerStage$Stage)
+
+rm(CancerStage, StageMatrix, i)
+```
+
+#General exploration of the mucin relative expressions
+
+##1. Calculating the minimum, maximum and mean of each mucin for each tissue type
+```{r}
+Mucins <- c("MUC1", "MUC2", "MUC4", "MUC5AC", "MUC6", "MUC13")
+Tissue <- levels(MetaData$Tissue.Type)
+
+Mucin_metrics <- c()
+
+for (i in Tissue) {
+    temp_tissue <- MetaData[MetaData$Tissue.Type == i,]
+    for (j in Mucins) {
+        min_temp <- min(temp_tissue[, j], na.rm = TRUE)
+        max_temp <- max(temp_tissue[, j], na.rm = TRUE)
+        mean_temp <- mean(temp_tissue[, j], na.rm = TRUE)
+        muc_type_temp <- paste(j, i, sep = "_")
+        Mucin_metrics <- rbind(Mucin_metrics, c(muc_type_temp, min_temp, mean_temp, max_temp))
+    }
+    rm(min_temp, max_temp, mean_temp, muc_type_temp, temp_tissue)
+}
+
+rownames(Mucin_metrics) <- Mucin_metrics[, 1]
+Mucin_metrics <- Mucin_metrics[, 2:4]
+colnames(Mucin_metrics) <- c("min", "mean", "max")
+
+rm(Tissue,i,j)
+```
+
+##2. Looking at the expression values of the control patient cohort:
+    * Check normality of the distribution
+    * caluclating confidence interval for each mucin
+    
+```{r}
+#extracting the expression data from the control patients the metadata object
+MetaData_control <- MetaData[MetaData$Tissue.Type == "noninflammed",]
+
+#looking at the distribution of the functional dyspepsia patients
+Control_Dens <- ggdensity(data = MetaData_control, x = "MUC13")
+Control_Dens
+
+#doing a log2 transformation and re-evaluating the normality
+MetaData_control %>%
+  mutate(.,MUC13_Log2 = log(MetaData_control$MUC13,2)) %>%
+  ggdensity(., x = "MUC13_Log2")
+
+#calculating the confidence intervals using a boot strapping method due to non-normal distribution
+MUC_CI <- c()
+
+for (MUC in Mucins){
+  boot_MUC <- boot(data= MetaData_control[,MUC],function(x,i) mean(x[i]),R=10000)
+  boot_MUC_CI <- boot.ci(boot_MUC,conf = 0.90,type = "bca")
+  MUC_CI <- rbind(MUC_CI, boot_MUC_CI$bca[4:5])
+  rm(boot_MUC,boot_MUC_CI,MUC)
+}
+
+row.names(MUC_CI) <- Mucins
+colnames(MUC_CI) <- c("Lower_CI","Upper_CI")
+
+#clean-up
+rm(MetaData_control,Control_Dens)
+```
+
+##3. Per sample mucin expression level stratification based on CI of control samples
+
+```{r}
+#subsetting to data frame to the Adenocarinoma samples with their adjacent tissue samples
+MUC_exp <- subset(MetaData, select = c("Patient.ID", "Tissue.Type", "MUC1", "MUC2", "MUC4", "MUC5AC", "MUC6", "MUC13"))
+MUC_exp <- MUC_exp[MUC_exp$Tissue.Type != "noninflammed",] %>%
+  drop_na(., "Tissue.Type")
+#initializing the empty score matrix to hold the stratification scores
+score_matrix_N <- as.data.frame(matrix(ncol = 7, nrow = 108))
+colnames(score_matrix_N) <- c("Patient.ID", "MUC1_N", "MUC2_N", "MUC4_N", "MUC5AC_N", "MUC6_N", "MUC13_N")
+score_matrix_T <- as.data.frame(matrix(ncol = 7, nrow = 108))
+colnames(score_matrix_T) <- c("Patient.ID", "MUC1_T", "MUC2_T", "MUC4_T", "MUC5AC_T", "MUC6_T", "MUC13_T")
+#getting the patient ID's ready in the score matrixes
+score_matrix_N$Patient.ID <- MUC_exp$Patient.ID[MUC_exp$Tissue.Type == "adjacent"]
+score_matrix_T$Patient.ID <- MUC_exp$Patient.ID[MUC_exp$Tissue.Type == "tumor"]
+
+#j is for looping of the mucins
+for (j in 3:8) {
+    i_T <- 1
+    i_N <- 1
+#i is for looping of the patients (matrix rows)
+    for (i in 1:nrow(MUC_exp)) {
+        if (MUC_exp$Tissue.Type[i] == "adjacent") {
+
+            s_N <- NA
+
+            if (is.na(MUC_exp[i, j])) {
+
+            } else if (MUC_exp[i, j] > MUC_CI[j - 2,2]) {
+                s_N <- 1
+            } else if (MUC_exp[i, j] > MUC_CI[j - 2,1]) {
+                s_N <- 0
+            } else {
+                s_N <- -1
+            }
+
+            score_matrix_N[i_N, j - 1] <- s_N
+            i_N <- i_N + 1
+
+        } else if (MUC_exp$Tissue.Type[i] == "tumor") {
+
+            s_T <- NA
+
+            if (is.na(MUC_exp[i, j])) {
+
+            } else if (MUC_exp[i, j] > MUC_CI[j - 2,2]) {
+                s_T <- 1
+            } else if (MUC_exp[i, j] > MUC_CI[j - 2,1]) {
+                s_T <- 0
+            } else {
+                s_T <- -1
+            }
+
+            score_matrix_T[i_T, j - 1] <- s_T
+            i_T <- i_T + 1
+
+        }
+    }
+}
+
+score_matrix <- full_join(score_matrix_N, score_matrix_T, by = "Patient.ID")
+score_matrix <- score_matrix[, c(1, order(colnames(score_matrix)[2:13]) + 1)]
+
+colnames_score_matrix <- colnames(score_matrix)
+colnames_score_matrix <- c(colnames_score_matrix[1], paste("Strat.Score", colnames_score_matrix[2:13], sep = "_"))
+colnames(score_matrix) <- colnames_score_matrix
+
+MetaData <- full_join(MetaData, score_matrix, by = "Patient.ID")
+
+rm(MUC_exp, s_N, s_T, score_matrix, score_matrix_N, score_matrix_T, i_N, i_T, i, j,colnames_score_matrix)
+```
+
+##4. Determining the Mucin phenotype Classification of each sample
+
+```{r}
+df_Strat.Score <- MetaData[, c("Patient.ID", "Tissue.Type", "Strat.Score_MUC1_N", "Strat.Score_MUC1_T", "Strat.Score_MUC2_N", "Strat.Score_MUC2_T", "Strat.Score_MUC4_N", "Strat.Score_MUC4_T", "Strat.Score_MUC5AC_N", "Strat.Score_MUC5AC_T", "Strat.Score_MUC6_N", "Strat.Score_MUC6_T", "Strat.Score_MUC13_N", "Strat.Score_MUC13_T")]
+
+df_Strat.Score <- df_Strat.Score %>%
+  mutate(., Strat.Score_MUC5AC_N = replace(Strat.Score_MUC5AC_N, Strat.Score_MUC5AC_N == 0, 1),
+         Strat.Score_MUC5AC_T = replace(Strat.Score_MUC5AC_T, Strat.Score_MUC5AC_T == 0, 1),
+         Strat.Score_MUC6_N = replace(Strat.Score_MUC6_N, Strat.Score_MUC6_N == 0, 1),
+         Strat.Score_MUC6_T = replace(Strat.Score_MUC6_T, Strat.Score_MUC6_T == 0, 1),
+         Strat.Score_MUC1_N = replace(Strat.Score_MUC1_N, Strat.Score_MUC1_N == 0, 1),
+         Strat.Score_MUC1_T = replace(Strat.Score_MUC1_T, Strat.Score_MUC1_T == 0, 1)) %>%
+  mutate(., Strat.Score_MUC5AC_N = replace(Strat.Score_MUC5AC_N, Strat.Score_MUC5AC_N == -1, 0),
+         Strat.Score_MUC5AC_T = replace(Strat.Score_MUC5AC_T, Strat.Score_MUC5AC_T == -1, 0),
+         Strat.Score_MUC6_N = replace(Strat.Score_MUC6_N, Strat.Score_MUC6_N == -1, 0),
+         Strat.Score_MUC6_T = replace(Strat.Score_MUC6_T, Strat.Score_MUC6_T == -1, 0),
+         Strat.Score_MUC1_N = replace(Strat.Score_MUC1_N, Strat.Score_MUC1_N == -1, 0),
+         Strat.Score_MUC1_T = replace(Strat.Score_MUC1_T, Strat.Score_MUC1_T == -1, 0)) %>%
+  mutate(., Strat.Score_MUC2_N = replace(Strat.Score_MUC2_N, Strat.Score_MUC2_N == -1, 0),
+         Strat.Score_MUC2_T = replace(Strat.Score_MUC2_T, Strat.Score_MUC2_T == -1, 0),
+         Strat.Score_MUC4_N = replace(Strat.Score_MUC4_N, Strat.Score_MUC4_N == -1, 0),
+         Strat.Score_MUC4_T = replace(Strat.Score_MUC4_T, Strat.Score_MUC4_T == -1, 0),
+         Strat.Score_MUC13_N = replace(Strat.Score_MUC13_N, Strat.Score_MUC13_N == -1, 0),
+         Strat.Score_MUC13_T = replace(Strat.Score_MUC13_T, Strat.Score_MUC13_T == -1, 0))
+
+criteria <- data.frame(Patient.ID = df_Strat.Score$Patient.ID, Tissue.Type = df_Strat.Score$Tissue.Type,
+                       gast_MUC_N = df_Strat.Score$Strat.Score_MUC5AC_N + df_Strat.Score$Strat.Score_MUC6_N + df_Strat.Score$Strat.Score_MUC1_N,
+                       gast_MUC_T = df_Strat.Score$Strat.Score_MUC5AC_T + df_Strat.Score$Strat.Score_MUC6_T + df_Strat.Score$Strat.Score_MUC1_T,
+                       int_MUC_N = df_Strat.Score$Strat.Score_MUC13_N + df_Strat.Score$Strat.Score_MUC2_N + df_Strat.Score$Strat.Score_MUC4_N,
+                       int_MUC_T = df_Strat.Score$Strat.Score_MUC13_T + df_Strat.Score$Strat.Score_MUC2_T + df_Strat.Score$Strat.Score_MUC4_T)
+criteria <- criteria[criteria$Tissue.Type == "tumor", c(1, 3:6)]
+
+mucine_type <- data.frame(Patient.ID = rep(NA, nrow(criteria)), Mucin.Phenotype = rep(NA, nrow(criteria)))
+
+for (i in 1:nrow(criteria)) {
+    mucine_type$Patient.ID[i] <- criteria$Patient.ID[i]
+    if (is.na(criteria$gast_MUC_T[i]) | is.na(criteria$int_MUC_T[i])) {
+        mucine_type$Mucin.Phenotype[i] <- NA
+    } else if (criteria$gast_MUC_T[i] > 0 && criteria$int_MUC_T[i] > 0) {
+        mucine_type$Mucin.Phenotype[i] <- "Mixed"
+    } else if (criteria$gast_MUC_T[i] > 0 & criteria$int_MUC_T[i] == 0) {
+        mucine_type$Mucin.Phenotype[i] <- "Gastric"
+    } else if (criteria$gast_MUC_T[i] == 0 & criteria$int_MUC_T[i] > 0) {
+        mucine_type$Mucin.Phenotype[i] <- "Intestinal"
+    } else if (criteria$gast_MUC_T[i] == 0 & criteria$int_MUC_T[i] == 0) {
+        mucine_type$Mucin.Phenotype[i] <- "Null"
+    } else {
+        mucine_type$Mucin.Phenotype[i] <- "not considered"
+    }
+}
+
+mucine_type$Mucin.Phenotype <- as.factor(mucine_type$Mucin.Phenotype)
+summary(mucine_type)
+
+MetaData <- full_join(MetaData, mucine_type,by = "Patient.ID")
+
+#cleanUp
+rm("criteria","df_Strat.Score","Mucin_metrics","mucine_type", "i")
+```
+
+##5. Generating the boxplots for figure 1-A
+
+```{r}
+#creating long format for the mucin data
+MetaData_long <- gather(data = MetaData , key = "Mucin", value = "CNRQ",  22:27) %>%
+  mutate(CNRQ_log2 = log(x = .$CNRQ, base = 2))
+#ordering the Mucin variable to have the gastric and intestinal mucins grouped
+MetaData_long$Mucin <- factor(MetaData_long$Mucin, levels = c("MUC1","MUC5AC","MUC6","MUC2","MUC4","MUC13"), labels = c("MUC1","MUC5AC","MUC6","MUC2","MUC4","MUC13"),ordered = TRUE)
+#replacing the noninflammed with control as tissue type
+MetaData_long$Tissue.Type <- factor(MetaData_long$Tissue.Type,levels = c("noninflammed","adjacent","tumor"),labels = c("control","adjacent","tumor"),ordered = TRUE)
+
+#Adding the expression levels of the tumours per mucin phenotype to the dataframe
+MetaData_Extended <- MetaData_long %>%
+  mutate(Mucin.Phenotype = .$Tissue.Type) %>%
+  rbind(.,MetaData_long) %>%
+  drop_na(., Mucin.Phenotype)
+
+#generating general plot for the mucin expression: [control, adjacent, tumor] and [gastric, intestinal, mixed, null]
+MucinGeneral_boxplot <- MetaData_Extended %>%
+  ggplot(data = ., aes(x = Mucin.Phenotype , y = CNRQ_log2, color = Mucin.Phenotype))+
+  geom_boxplot()+
+  geom_point(position = position_jitter(seed = 1995,width = 0.15))+
+  facet_wrap(~Mucin)+
+  scale_x_discrete(guide = guide_axis(angle = 90))+
+  stat_compare_means(aes(label = ..p.signif..),hide.ns = TRUE,method = "wilcox.test",comparisons = list(c("Gastric","Intestinal"),c("Intestinal","Mixed"),c("Mixed","Null"),c("Gastric","Mixed"),c("Gastric","Null"),c("Intestinal","Null")))+
+  theme_classic2()
+MucinGeneral_boxplot
+
+rm(MetaData_Extended,MetaData_long)
+```
+
+#Correlation analysis using predictive power scores
+
+```{r}
+MetaData_PPS <- select(MetaData, c("Age","Gender","Tissue.Type","Tumor.Location","Lauren.Classification","T","N","M","G","Stage","Survival","Mucin.Phenotype","MUC1","MUC5AC","MUC6","MUC2","MUC4","MUC13"))
+
+MetaData_PPS$Tumor.Location[MetaData_PPS$Tissue.Type == "adjacent"] <- NA
+MetaData_PPS$Lauren.Classification[MetaData_PPS$Tissue.Type == "adjacent"] <- NA
+MetaData_PPS$T[MetaData_PPS$Tissue.Type == "adjacent"] <- NA
+MetaData_PPS$N[MetaData_PPS$Tissue.Type == "adjacent"] <- NA
+MetaData_PPS$M[MetaData_PPS$Tissue.Type == "adjacent"] <- NA
+MetaData_PPS$G[MetaData_PPS$Tissue.Type == "adjacent"] <- NA
+MetaData_PPS$Stage[MetaData_PPS$Tissue.Type == "adjacent"] <- NA
+MetaData_PPS$Mucin.Phenotype[MetaData_PPS$Tissue.Type == "adjacent"] <- NA
+
+MetaData_PPS <- subset(MetaData_PPS, Tissue.Type != "noninflammed")
+MetaData_PPS <- droplevels(MetaData_PPS,Tissue.Type = "noninflammed")
+
+MetaData_PPS$T <- as.factor(MetaData_PPS$T)
+MetaData_PPS$N <- as.factor(MetaData_PPS$N)
+MetaData_PPS$M <- as.factor(MetaData_PPS$M)
+MetaData_PPS$G <- as.factor(MetaData_PPS$G)
+MetaData_PPS$Stage <- as.factor(MetaData_PPS$Stage)
+
+
+PPS_df <- score_df(MetaData_PPS)
+HeatMap_pps <- visualize_pps(MetaData_PPS,color_value_low = "white", color_value_high = "#7A0403", color_text = "black")
+```
+
+#Survival analysis
+##1. Formatting the dataframe for survival analysis
+
+```{r}
+MetaData_Surv <- MetaData[MetaData$Tissue.Type == "tumor",]
+MetaData_Surv$Survival <- as.numeric(MetaData_Surv$Survival)
+MetaData_Surv <- drop_na(MetaData_Surv, Survival)
+
+
+MetaData_Surv$Survival <- factor(MetaData_Surv$Survival)
+MetaData_Surv$Survival <- as.numeric(MetaData_Surv$Survival)
+MetaData_Surv <- drop_na(data = MetaData_Surv, "Survival")
+MetaData_Surv$Mucin.Phenotype <- as.character(MetaData_Surv$Mucin.Phenotype)
+```
+
+##2. Kaplan- Meijer curve: mucin phenotype ~ survival (figure 2-A)
+
+```{r}
+##fitting a survival curve
+SurvivalPhenotype <- survfit(Surv(Observation.Days, Survival) ~ Mucin.Phenotype, data = MetaData_Surv)
+summary(SurvivalPhenotype)
+
+phenoType_curve <- ggsurvplot(fit = SurvivalPhenotype, data = MetaData_Surv,
+           pval = TRUE, 
+           conf.int = TRUE, 
+           risk.table = TRUE, 
+           risk.table.col = "strata",
+           surv.median.line = "hv",
+           legend.labs = c("Gastric", "Intestinal", "Mixed", "Null"),
+           break.x.by= 365,
+           ggtheme = theme_classic())
+phenoType_curve
+
+rm(SurvivalPhenotype)
+```
+
+##3. Cox-proportional hazards model mucin phenotype (figure 2-A)
+```{r}
+#fitting a cox proportional hazards model
+CoxPhenotype <- coxph(Surv(Observation.Days, Survival) ~ Age + Gender + Mucin.Phenotype, data = MetaData_Surv)
+summary(CoxPhenotype)
+Forest_coxPheno <- ggforest(CoxPhenotype)
+Forest_coxPheno
+
+#testing cox-proportional hazards model assumptions
+test.pheno <- cox.zph(CoxPhenotype)
+test.pheno
+
+ggcoxzph(test.pheno)
+rm(test.pheno)
+
+ggcoxdiagnostics(CoxPhenotype,  type = "dfbeta", linear.predictions = FALSE, ggtheme = theme_bw())
+ggcoxdiagnostics(CoxPhenotype,type = "deviance", linear.predictions = FALSE, ggtheme = theme_bw())
+  
+rm(CoxPhenotype)
+```
+
+##3 Kaplan-meijer curves and Cox-proportional hazards model per mucin (figure 2-B)
+  For MUC1, MUC5AC and MUC6 the mid-level were filtered due to to low number of patient for the Kaplan-Meier curves.
+  
+```{r}
+MetaData_Surv$Strat.Score_MUC13_T <- factor(MetaData_Surv$Strat.Score_MUC13_T, levels = c(-1,0,1), labels = c("low","mid","high"))
+MetaData_Surv$Strat.Score_MUC1_T <- factor(MetaData_Surv$Strat.Score_MUC1_T, levels = c(-1,0,1), labels = c("low","mid","high"))
+MetaData_Surv$Strat.Score_MUC2_T <- factor(MetaData_Surv$Strat.Score_MUC2_T, levels = c(-1,0,1), labels = c("low","mid","high"))
+MetaData_Surv$Strat.Score_MUC4_T <- factor(MetaData_Surv$Strat.Score_MUC4_T, levels = c(-1,0,1), labels = c("low","mid","high"))
+MetaData_Surv$Strat.Score_MUC5AC_T <- factor(MetaData_Surv$Strat.Score_MUC5AC_T, levels = c(-1,0,1), labels = c("low","mid","high"))
+MetaData_Surv$Strat.Score_MUC6_T <- factor(MetaData_Surv$Strat.Score_MUC6_T, levels = c(-1,0,1), labels = c("low","mid","high"))
+
+#Kaplan-Meijer curve
+SurvivalMUC1 <- MetaData_Surv %>%
+  filter(., Strat.Score_MUC1_T != "mid") %>%
+  survfit(Surv(Observation.Days, Survival) ~ Strat.Score_MUC1_T, data = .)
+
+MUC1_curve <- ggsurvplot(fit = SurvivalMUC1, data = MetaData_Surv, title = "MUC1", 
+           pval = TRUE, 
+           conf.int = TRUE, 
+           risk.table = TRUE, 
+           risk.table.col = "strata",
+           surv.median.line = "hv",
+           legend.labs = c("low","high"),
+           break.x.by= 365,
+           ggtheme = theme_classic()
+           )
+MUC1_curve
+rm(SurvivalMUC1)
+
+SurvivalMUC5AC <- MetaData_Surv %>%
+  filter(., Strat.Score_MUC5AC_T != "mid") %>%
+  survfit(Surv(Observation.Days, Survival) ~ Strat.Score_MUC5AC_T, data = .)
+
+MUC5AC_curve <- ggsurvplot(fit = SurvivalMUC5AC, data = MetaData_Surv, title = "MUC5AC",
+           pval = TRUE, 
+           conf.int = TRUE, 
+           risk.table = TRUE, 
+           risk.table.col = "strata",
+           surv.median.line = "hv",
+           legend.labs = c("low","high"),
+           break.x.by= 365,
+           ggtheme = theme_classic()
+           )
+MUC5AC_curve
+rm(SurvivalMUC5AC)
+
+SurvivalMUC6 <- MetaData_Surv %>%
+  filter(., Strat.Score_MUC6_T != "mid") %>%
+  survfit(Surv(Observation.Days, Survival) ~ Strat.Score_MUC6_T, data = .)
+
+MUC6_curve <- ggsurvplot(fit = SurvivalMUC6, data = MetaData_Surv, title = "MUC6",
+           pval = TRUE, 
+           conf.int = TRUE, 
+           risk.table = TRUE, 
+           risk.table.col = "strata",
+           surv.median.line = "hv",
+           legend.labs = c("low","high"),
+           break.x.by= 365,
+           ggtheme = theme_classic()
+           )
+MUC6_curve
+rm(SurvivalMUC6)
+
+SurvivalMUC2 <- survfit(Surv(Observation.Days, Survival) ~ Strat.Score_MUC2_T, data = MetaData_Surv)
+
+MUC2_curve <- ggsurvplot(fit = SurvivalMUC2, data = MetaData_Surv, title = "MUC2", 
+           pval = TRUE, 
+           conf.int = TRUE, 
+           risk.table = TRUE, 
+           risk.table.col = "strata",
+           surv.median.line = "hv",
+           legend.labs = c("low", "mid","high"),
+           break.x.by= 365,
+           ggtheme = theme_classic()
+           )
+MUC2_curve
+rm(SurvivalMUC2)
+
+SurvivalMUC4 <- survfit(Surv(Observation.Days, Survival) ~ Strat.Score_MUC4_T, data = MetaData_Surv)
+
+MUC4_curve <- ggsurvplot(fit = SurvivalMUC4, data = MetaData_Surv, title = "MUC4", 
+           pval = TRUE, 
+           conf.int = TRUE, 
+           risk.table = TRUE, 
+           risk.table.col = "strata",
+           surv.median.line = "hv",
+           legend.labs = c("low", "mid","high"),
+           break.x.by= 365,
+           ggtheme = theme_classic()
+           )
+MUC4_curve
+rm(SurvivalMUC4)
+
+SurvivalMUC13 <- survfit(Surv(Observation.Days, Survival) ~ Strat.Score_MUC13_T, data = MetaData_Surv)
+
+MUC13_curve <- ggsurvplot(fit = SurvivalMUC13, data = MetaData_Surv, title = "MUC13",
+           pval = TRUE, 
+           conf.int = TRUE, 
+           risk.table = TRUE, 
+           risk.table.col = "strata",
+           surv.median.line = "hv",
+           legend.labs = c("low", "mid","high"),
+           break.x.by= 365,
+           ggtheme = theme_classic()
+           )
+MUC13_curve
+rm(SurvivalMUC13)
+
+surv_gastric <- ggarrange(MUC1_curve$plot, MUC5AC_curve$plot, MUC6_curve$plot, common.legend= TRUE, ncol = 3,legend = "right") 
+surv_intestinal <- ggarrange(MUC2_curve$plot, MUC4_curve$plot, MUC13_curve$plot, common.legend = TRUE,ncol = 3, legend = "right" )
+
+Mucin_survivalPlot <- ggarrange(surv_gastric,surv_intestinal, nrow = 2)
+Mucin_survivalPlot
+rm(MUC1_curve,MUC5AC_curve,MUC6_curve,MUC2_curve,MUC4_curve,MUC13_curve,surv_gastric,surv_intestinal)
+
+##fitting a Cox proportional hazards model
+MetaData_Surv$Strat.Score_MUC13_T <- relevel(as.factor(MetaData_Surv$Strat.Score_MUC13_T), ref = "mid")
+MetaData_Surv$Strat.Score_MUC1_T <- relevel(as.factor(MetaData_Surv$Strat.Score_MUC1_T), ref = "mid")
+MetaData_Surv$Strat.Score_MUC2_T <- relevel(as.factor(MetaData_Surv$Strat.Score_MUC2_T), ref = "mid")
+MetaData_Surv$Strat.Score_MUC4_T <- relevel(as.factor(MetaData_Surv$Strat.Score_MUC4_T), ref = "mid")
+MetaData_Surv$Strat.Score_MUC5AC_T <- relevel(as.factor(MetaData_Surv$Strat.Score_MUC5AC_T), ref = "mid")
+MetaData_Surv$Strat.Score_MUC6_T <- relevel(as.factor(MetaData_Surv$Strat.Score_MUC6_T), ref = "mid")
+
+CoxStrat <- coxph(Surv(Observation.Days, Survival) ~ Age + Gender + Strat.Score_MUC13_T + Strat.Score_MUC1_T + Strat.Score_MUC2_T + Strat.Score_MUC4_T + Strat.Score_MUC5AC_T +  Strat.Score_MUC6_T, data = MetaData_Surv)
+summary(CoxStrat)
+Forest_coxStrat <- ggforest(CoxStrat)
+Forest_coxStrat
+
+#testing cox-proportional hazards model assumptions
+test.pheno <- cox.zph(CoxStrat)
+test.pheno
+
+ggcoxzph(test.pheno)
+
+ggcoxdiagnostics(CoxStrat,  type = "dfbeta", linear.predictions = FALSE, ggtheme = theme_bw())
+
+ggcoxdiagnostics(CoxStrat,type = "deviance", linear.predictions = FALSE, ggtheme = theme_bw())
+
+rm(CoxStrat,test.pheno)
+```
+
+#adding the clinical and expression data to the phyloseq object
+```{r}
+#reading the clinical data
+#manually importing the different metadata 
+MetaData_Ill <- MetaData %>%
+  drop_na(data = ., "Illumina.ID") %>%
+  as.data.frame(.)
+rownames(MetaData_Ill) <- MetaData_Ill$Illumina.ID
+
+sample_data(agglom_BA) <- MetaData_Ill
+sample_data(agglom_relAb) <- MetaData_Ill
+```
+
