@@ -1,5 +1,5 @@
 ---
-title: "6. Beta_diversity_analysis"
+title: "5. Beta_diversity_analysis"
 author: "Baptiste Oosterlinck"
 date: "2-3-2022"
 output: html_document
